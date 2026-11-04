@@ -49,8 +49,12 @@ class CDPInjector:
         else:
             self.overlay_path = Path(overlay_path)
 
-        self.overlay_source = self._load_overlay_source()
-        self.fingerprint = hashlib.sha256(self.overlay_source.encode("utf-8")).hexdigest()[:16]
+        self.raw_overlay = self._load_overlay_source()
+        self.fingerprint = hashlib.sha256(self.raw_overlay.encode("utf-8")).hexdigest()[:16]
+        self.overlay_source = (
+            f"window.__antigravityZhPatchRequestedFingerprint = '{self.fingerprint}';\n"
+            + self.raw_overlay
+        )
 
     def _next_id(self) -> int:
         with self._counter_lock:
@@ -101,7 +105,11 @@ class CDPInjector:
         """Check if target's current document has the overlay installed."""
         try:
             with ws_connect(ws_url, open_timeout=2.0, close_timeout=1.0) as ws:
-                check_expr = "window.__antigravityZhPatchInstalled === true && window.__observedDocument === document"
+                check_expr = (
+                    f"window.__antigravityZhPatchInstalled === true && "
+                    f"window.__observedDocument === document && "
+                    f"window.__antigravityZhPatchFingerprint === '{self.fingerprint}'"
+                )
                 resp = self._cdp_call(ws, "Runtime.evaluate", {"expression": check_expr, "returnByValue": True}, timeout=2.0)
                 return bool(resp.get("result", {}).get("result", {}).get("value") is True)
         except Exception:
@@ -128,7 +136,11 @@ class CDPInjector:
         try:
             with ws_connect(ws_url, open_timeout=3.0, close_timeout=1.5) as ws:
                 # 1. Quick check on connection
-                check_expr = "window.__antigravityZhPatchInstalled === true && window.__observedDocument === document"
+                check_expr = (
+                    f"window.__antigravityZhPatchInstalled === true && "
+                    f"window.__observedDocument === document && "
+                    f"window.__antigravityZhPatchFingerprint === '{self.fingerprint}'"
+                )
                 resp = self._cdp_call(ws, "Runtime.evaluate", {"expression": check_expr, "returnByValue": True}, timeout=2.0)
                 if resp.get("result", {}).get("result", {}).get("value") is True:
                     return True

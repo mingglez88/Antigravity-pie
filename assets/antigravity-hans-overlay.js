@@ -1,6 +1,6 @@
 (() => {
   if (typeof window === 'undefined') return;
-  const fingerprint = window.__antigravityZhPatchRequestedFingerprint || 'app-2.26.0-20261026-r1';
+  const fingerprint = window.__antigravityZhPatchRequestedFingerprint || 'app-2.26.0-20261026-r3';
   if (window.__antigravityZhPatchInstalled === true && window.__observedDocument === document && window.__antigravityZhPatchFingerprint === fingerprint) return;
   const updating = window.__antigravityZhPatchInstalled === true && window.__observedDocument === document;
   if (typeof window.__antigravityZhPatchCleanup === 'function') window.__antigravityZhPatchCleanup();
@@ -18,6 +18,60 @@
   };
 
   const phrases = new Map([
+    ['Analyzed', '\u5df2\u5206\u6790'],
+    ['Created', '\u5df2\u521b\u5efa'],
+    ['Viewed', '\u5df2\u67e5\u770b'],
+    ['Local Checkout', '\u672c\u5730\u73af\u5883'],
+    ['Select Environment', '\u9009\u62e9\u73af\u5883'],
+    ['Select Environment (Ctrl+.)', '\u9009\u62e9\u73af\u5883 (Ctrl+.)'],
+    ['No automations yet', '\u6682\u65e0\u81ea\u52a8\u5316\u4efb\u52a1'],
+    ['Run a prompt on a schedule, like a morning summary of yesterday\'s changes. Runs show up here.', '\u6309\u8ba1\u5212\u5b9a\u65f6\u8fd0\u884c\u63d0\u793a\u8bcd\uff0c\u4f8b\u5982\u6c47\u603b\u6628\u5929\u7684\u4ee3\u7801\u53d8\u66f4\u3002\u8fd0\u884c\u8bb0\u5f55\u5c06\u663e\u793a\u5728\u6b64\u5904\u3002'],
+    ['\u5426 \u81ea\u52a8\u5316 yet', '\u6682\u65e0\u81ea\u52a8\u5316\u4efb\u52a1'],
+    ['No automations', '\u6682\u65e0\u81ea\u52a8\u5316\u4efb\u52a1'],
+    ['Settings for conversations outside of projects.', '\u9879\u76ee\u5916\u72ec\u7acb\u5bf9\u8bdd\u7684\u8bbe\u7f6e\u3002'],
+    ['Search shortcuts...', '\u641c\u7d22\u5feb\u6377\u952e...'],
+    ['Search shortcuts', '\u641c\u7d22\u5feb\u6377\u952e'],
+    ['Reopen Closed Tab', '\u91cd\u65b0\u6253\u5f00\u5173\u95ed\u7684\u6807\u7b7e\u9875'],
+    ['Move Conversation Up', '\u4e0a\u79fb\u5bf9\u8bdd'],
+    ['Move Conversation Down', '\u4e0b\u79fb\u5bf9\u8bdd'],
+    ['Previous Side Panel Tab', '\u4e0a\u4e00\u4e2a\u4fa7\u8fb9\u9762\u677f\u6807\u7b7e\u9875'],
+    ['Next Side Panel Tab', '\u4e0b\u4e00\u4e2a\u4fa7\u8fb9\u9762\u677f\u6807\u7b7e\u9875'],
+    ['Toggle Side Panel', '\u5207\u6362\u4fa7\u8fb9\u9762\u677f'],
+    ['Toggle Maximize Side Panel', '\u5207\u6362\u6700\u5927\u5316\u4fa7\u8fb9\u9762\u677f'],
+    ['Maximize Side Panel', '\u6700\u5927\u5316\u4fa7\u8fb9\u9762\u677f'],
+    ['Side Panel', '\u4fa7\u8fb9\u9762\u677f'],
+    ['\u5207\u6362 Side Panel', '\u5207\u6362\u4fa7\u8fb9\u9762\u677f'],
+    ['\u5207\u6362 Maximize Side Panel', '\u5207\u6362\u6700\u5927\u5316\u4fa7\u8fb9\u9762\u677f'],
+    ['Conversation Steps', '\u5bf9\u8bdd\u6b65\u9aa4'],
+    ['Choose how much detail is shown during a conversation.', '\u9009\u62e9\u5728\u5bf9\u8bdd\u671f\u95f4\u663e\u793a\u7684\u8be6\u7ec6\u7a0b\u5ea6\u3002'],
+    ['Verbose', '\u8be6\u7ec6'],
+    ['Built-in Browser', '\u5185\u7f6e\u6d4f\u89c8\u5668'],
+    ['Configure link opening and built-in browser preferences.', '\u914d\u7f6e\u94fe\u63a5\u6253\u5f00\u65b9\u5f0f\u4e0e\u5185\u7f6e\u6d4f\u89c8\u5668\u504f\u597d\u8bbe\u7f6e\u3002'],
+    ['Open Links In', '\u6253\u5f00\u94fe\u63a5\u65b9\u5f0f'],
+    ['Choose where links open by default when clicked.', '\u9009\u62e9\u70b9\u51fb\u94fe\u63a5\u65f6\u9ed8\u8ba4\u6253\u5f00\u7684\u4f4d\u7f6e\u3002'],
+    ['External Browser', '\u5916\u90e8\u6d4f\u89c8\u5668'],
+    ['Download Location', '\u4e0b\u8f7d\u4fdd\u5b58\u4f4d\u7f6e'],
+    ['Folder where files downloaded in the built-in browser are saved.', '\u5185\u7f6e\u6d4f\u89c8\u5668\u4e0b\u8f7d\u6587\u4ef6\u7684\u4fdd\u5b58\u6587\u4ef6\u5939\u3002'],
+    ['Browsing History', '\u6d4f\u89c8\u8bb0\u5f55'],
+    ['Clear visited URLs and autocomplete suggestions from the built-in browser.', '\u6e05\u9664\u5185\u7f6e\u6d4f\u89c8\u5668\u4e2d\u8bbf\u95ee\u8fc7\u7684\u7f51\u5740\u53ca\u81ea\u52a8\u8865\u5168\u5efa\u8bae\u3002'],
+    ['Change...', '\u66f4\u6539...'],
+    ['Voice mode', '\u8bed\u97f3\u6a21\u5f0f'],
+    ['Microphone', '\u9ea6\u514b\u98ce'],
+    ['Input device for voice mode and dictation.', '\u7528\u4e8e\u8bed\u97f3\u6a21\u5f0f\u4e0e\u542c\u5199\u7684\u8f93\u5165\u8bbe\u5907\u3002'],
+    ['System default', '\u7cfb\u7edf\u9ed8\u8ba4'],
+    ['Browser Subagent', '\u6d4f\u89c8\u5668\u5b50\u667a\u80fd\u4f53'],
+    ['Search or enter a URL', '\u641c\u7d22\u6216\u8f93\u5165\u7f51\u5740'],
+    ['Open File', '\u6253\u5f00\u6587\u4ef6'],
+    ['Extensions', '\u6269\u5c55'],
+    ['No extensions available', '\u6682\u65e0\u53ef\u7528\u6269\u5c55'],
+    ['See all', '\u67e5\u770b\u5168\u90e8'],
+    ['subagent', '\u5b50\u667a\u80fd\u4f53'],
+    ['subagents', '\u5b50\u667a\u80fd\u4f53'],
+    ['Plan carefully before executing a task.', '\u5728\u6267\u884c\u4efb\u52a1\u524d\u4ed4\u7ec6\u5236\u5b9a\u65b9\u6848\u4e0e\u8ba1\u5212\u3002'],
+    ['Interview me to align on a plan.', '\u901a\u8fc7\u4e0e\u6211\u5bf9\u9f50\u8bbf\u8c08\uff0c\u63a8\u6f14\u5e76\u6572\u5b9a\u65b9\u6848\u4e0e\u8ba1\u5212\u3002'],
+    ['Invoke a team of agents to autonomously tackle large projects.', '\u8c03\u7528\u591a\u667a\u80fd\u4f53\u56e2\u961f\u81ea\u4e3b\u534f\u4f5c\u5904\u7406\u5927\u578b\u9879\u76ee\u3002'],
+    ['Reflect on recent successes or corrections to capture reusable skills or rules.', '\u590d\u76d8\u8fd1\u671f\u6210\u529f\u6216\u4fee\u6b63\u7ecf\u9a8c\uff0c\u6c89\u6dc0\u4e3a\u53ef\u590d\u7528\u7684\u6280\u80fd\u6216\u89c4\u5219\u3002'],
+    ['Invoke the Boost multi-agent orchestrator for complex tasks.', '\u9488\u5bf9\u590d\u6742\u4efb\u52a1\u8c03\u7528 Boost \u591a\u667a\u80fd\u4f53\u7f16\u6392\u5668\u3002'],
     ['Ask anything', '向 Antigravity 提问'],
     ['Type a message', '输入消息'],
     ['Interactive guide to design and create a scheduled background automation.', '设计和创建计划后台自动化的交互式指南。'],
@@ -1361,7 +1415,7 @@
     ['Labs', '实验室'],
     ['None', '无'],
     ['Open', '打开'],
-    ['Plan', '套餐计划'],
+    ['Plan', '计划'],
     ['Tool', '工具'],
     ['Type', '输入'],
     ['Quit', '退出'],
@@ -1437,7 +1491,12 @@
     editing: '正在编辑', edited: '已编辑',
     running: '正在运行', ran: '已运行',
     searching: '正在搜索', searched: '已搜索',
-    reading: '正在读取', read: '已读取'
+    reading: '\u6b63\u5728\u8bfb\u53d6', read: '\u5df2\u8bfb\u53d6',
+    analyzing: '\u6b63\u5728\u5206\u6790', analyzed: '\u5df2\u5206\u6790',
+    creating: '\u6b63\u5728\u521b\u5efa', created: '\u5df2\u521b\u5efa',
+    viewing: '\u6b63\u5728\u67e5\u770b', viewed: '\u5df2\u67e5\u770b',
+    updating: '\u6b63\u5728\u66f4\u65b0', updated: '\u5df2\u66f4\u65b0',
+    working: '\u5de5\u4f5c\u4e2d'
   };
   const progressNouns = new Map([
     ['file', ['文件', '个']], ['files', ['文件', '个']],
@@ -1574,6 +1633,24 @@
 
   // 动态变量与模板匹配（仅针对含捕获组、时间、计算等动态规则）
   const dynamicPatterns = [
+    // 步骤与执行动词正则
+    [/^Analyzed\s+/g, '\u5df2\u5206\u6790 '],
+    [/^Created\s+/g, '\u5df2\u521b\u5efa '],
+    [/^Edited\s+/g, '\u5df2\u7f16\u8f91 '],
+    [/^Ran\s+/g, '\u5df2\u8fd0\u884c '],
+    [/^Read\s+/g, '\u5df2\u8bfb\u53d6 '],
+    [/^Working\b/g, '\u5de5\u4f5c\u4e2d'],
+    [/^Local Checkout$/g, '\u672c\u5730\u73af\u5883'],
+    [/Select Environment\s*\(([^)]+)\)/g, '\u9009\u62e9\u73af\u5883 ($1)'],
+    // 自动化与侧边栏子智能体规则
+    [/^No automations yet$/gi, '\u6682\u65e0\u81ea\u52a8\u5316\u4efb\u52a1'],
+    [/^否\s*自动化\s*yet$/gi, '\u6682\u65e0\u81ea\u52a8\u5316\u4efb\u52a1'],
+    [/\((\d+)\s*subagents?\)/gi, '\uff08$1 \u4e2a\u5b50\u667a\u80fd\u4f53\uff09'],
+    [/(\d+)\s*subagents?\b/gi, '$1 \u4e2a\u5b50\u667a\u80fd\u4f53'],
+    [/切换\s*Side Panel/g, '\u5207\u6362\u4fa7\u8fb9\u9762\u677f'],
+    [/切换\s*Maximize Side Panel/g, '\u5207\u6362\u6700\u5927\u5316\u4fa7\u8fb9\u9762\u677f'],
+    [/^See all$/g, '\u67e5\u770b\u5168\u90e8'],
+    [/^See all \((\d+)\)$/g, '\u67e5\u770b\u5168\u90e8 ($1)'],
     // 聊天区任务卡片与文件变更
     [/(\d+)\s*files?\s*changed\b/gi, '$1 个文件已修改'],
     [/(\d+)\s*tasks?\s*running\b/gi, '$1 个任务运行中'],
@@ -1798,7 +1875,7 @@
     const agentResponse = element.closest('[aria-label="Agent response"], [aria-label="智能体回复"]');
     if (agentResponse) {
       if (node.nodeType === Node.ELEMENT_NODE && element === agentResponse) return false;
-      const isInteractive = element.closest('button, [role="button"], [class*="action"], [class*="button-container"], [data-testid="cleared-step-notice"], .files-changed-header, [class*="files-changed"], [class*="review"], [class*="task"], [class*="status"], .truncate');
+      const isInteractive = element.closest('button, [role="button"], [class*="action"], [class*="button-container"], [data-testid="cleared-step-notice"], .files-changed-header, [class*="files-changed"], [class*="review"], [class*="task"], [class*="status"], [class*="step"], [data-step-id], [class*="card"], .truncate');
       if (!isInteractive) return true;
     }
 
@@ -1922,7 +1999,7 @@
     if (shouldSkip(element)) return;
     if (!isInAntigravityContainer(element)) return;
     translateComposedElement(element);
-    for (const attr of ['aria-label', 'title', 'placeholder', 'alt']) {
+    for (const attr of ['aria-label', 'title', 'placeholder', 'data-placeholder', 'alt']) {
       const value = element.getAttribute?.(attr);
       if (!value) continue;
       const translated = translate(value);
@@ -1936,11 +2013,17 @@
     if (root.nodeType === Node.TEXT_NODE) {
       if (shouldSkip(root)) return;
       if (!isInAntigravityContainer(root)) return;
-      if (root.__zh_patched) return;
       const val = root.nodeValue || '';
+      if (root.__zh_patched && root.__zh_lastVal === val) return;
       const translated = translate(val);
-      if (translated !== val) root.nodeValue = translated;
-      root.__zh_patched = true;
+      if (translated !== val) {
+        root.nodeValue = translated;
+        root.__zh_patched = true;
+        root.__zh_lastVal = translated;
+      } else if (/[\u4e00-\u9fa5]/.test(val)) {
+        root.__zh_patched = true;
+        root.__zh_lastVal = val;
+      }
       return;
     }
     if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) return;
@@ -1959,11 +2042,17 @@
       if (shouldSkip(node)) continue;
       if (node.nodeType === Node.TEXT_NODE) {
         if (!isInAntigravityContainer(node)) continue;
-        if (node.__zh_patched) continue;
         const val = node.nodeValue || '';
+        if (node.__zh_patched && node.__zh_lastVal === val) continue;
         const translated = translate(val);
-        if (translated !== val) node.nodeValue = translated;
-        node.__zh_patched = true;
+        if (translated !== val) {
+          node.nodeValue = translated;
+          node.__zh_patched = true;
+          node.__zh_lastVal = translated;
+        } else if (/[\u4e00-\u9fa5]/.test(val)) {
+          node.__zh_patched = true;
+          node.__zh_lastVal = val;
+        }
       } else if (node.nodeType === Node.ELEMENT_NODE) {
         if (node.__zh_patched) continue;
         if (!isInAntigravityContainer(node)) continue;
