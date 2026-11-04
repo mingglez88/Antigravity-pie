@@ -11,6 +11,7 @@ from typing import Optional
 from core.app_launcher import AntigravityLauncher, is_process_running, terminate_running_instances
 from core.config_manager import ConfigManager
 from core.proxy_checker import check_proxy_http
+from core.shortcut_helper import create_all_desktop_shortcuts
 
 
 class MainWindow(tk.Tk):
@@ -351,25 +352,28 @@ class MainWindow(tk.Tk):
             self._launch_app()
 
     def _create_desktop_shortcut(self) -> None:
-        """Generate a one-click launcher shortcut on the user's Desktop."""
+        """Generate one-click launcher shortcuts and batch scripts on the user's Desktop."""
         self._save_to_config(show_prompt=False)
         try:
-            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-            bat_path = os.path.join(desktop, "启动Antigravity(汉化代理版).bat")
-            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "launcher.py"))
-            python_exe = sys.executable
+            app_path = self.config_manager.get("app_path", "")
+            ok, msgs = create_all_desktop_shortcuts(app_path=app_path)
+            for m in msgs:
+                self.append_log(f"[快捷方式] {m}")
 
-            content = f"""@echo off
-chcp 65001 >nul
-title Antigravity Launcher
-start "" "{python_exe}" "{script_path}" --silent-launch
-exit /b 0
-"""
-            with open(bat_path, "w", encoding="utf-8") as f:
-                f.write(content)
-
-            self.append_log(f"[快捷方式] 桌面启动脚本已创建: {bat_path}")
-            messagebox.showinfo("成功", f"已在桌面创建一键启动脚本：\n{bat_path}\n日常双击即可自动应用配置！")
+            if ok:
+                desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+                summary = (
+                    "已成功在桌面生成启动快捷方式与脚本：\n\n"
+                    "1. 🚀 Antigravity (汉化代理版).lnk\n"
+                    "   （带原版图标，无控制台黑框，双击静默直启 + 自动注入汉化）\n\n"
+                    "2. ⚙️ Antigravity 启动管理工具.lnk\n"
+                    "   （打开当前控制面板，可随时切换代理或查看运行状态）\n\n"
+                    "3. 📄 启动Antigravity(汉化代理版).bat\n"
+                    "   （桌面备用批处理脚本）"
+                )
+                messagebox.showinfo("创建成功", summary)
+            else:
+                messagebox.showwarning("部分完成", "\n".join(msgs))
         except Exception as e:
             self.append_log(f"[错误] 创建桌面快捷方式失败: {e}")
             messagebox.showerror("错误", f"创建快捷方式失败: {e}")
