@@ -11,3 +11,6 @@ ENV/
 bin/*.exe
 !bin/.gitkeep
 upstream/
+config.json
+*.vbs
+
