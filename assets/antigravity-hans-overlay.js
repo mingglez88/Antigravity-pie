@@ -1,6 +1,6 @@
 (() => {
   if (typeof window === 'undefined') return;
-  const fingerprint = window.__antigravityZhPatchRequestedFingerprint || 'app-2.26.0-20261026-r5';
+  const fingerprint = window.__antigravityZhPatchRequestedFingerprint || 'app-2.26.0-20261026-r7';
   if (window.__antigravityZhPatchInstalled === true && window.__observedDocument === document && window.__antigravityZhPatchFingerprint === fingerprint) return;
   const updating = window.__antigravityZhPatchInstalled === true && window.__observedDocument === document;
   if (typeof window.__antigravityZhPatchCleanup === 'function') window.__antigravityZhPatchCleanup();
@@ -10,6 +10,7 @@
   let observer;
   let cancelled = false;
   let flushScheduler;
+  window.__antigravityZhTranslate = translate;
   window.__antigravityZhPatchCleanup = () => {
     cancelled = true;
     observer?.disconnect();
@@ -18,6 +19,42 @@
   };
 
   const phrases = new Map([
+    ['Show in File Explorer', '\u5728\u6587\u4ef6\u8d44\u6e90\u7ba1\u7406\u5668\u4e2d\u663e\u793a'],
+    ['Split', '\u62c6\u5206'],
+    ['Mark Unread', '\u6807\u4e3a\u672a\u8bfb'],
+    ['Conversation Name', '\u5bf9\u8bdd\u540d\u79f0'],
+    ['Conversation ID', '\u5bf9\u8bdd ID'],
+    ['Project Name', '\u9879\u76ee\u540d\u79f0'],
+    ['Show in Explorer', '\u5728\u8d44\u6e90\u7ba1\u7406\u5668\u4e2d\u663e\u793a'],
+    ['just now', '\u521a\u521a'],
+    ['Local Checkout', '\u672c\u5730\u73af\u5883'],
+    ['Select Environment', '\u9009\u62e9\u73af\u5883'],
+    ['Select Environment (Ctrl+.)', '\u9009\u62e9\u73af\u5883 (Ctrl+.)'],
+    ['Analyzed', '\u5df2\u5206\u6790'],
+    ['Created', '\u5df2\u521b\u5efa'],
+    ['Working', '\u5de5\u4f5c\u4e2d'],
+    ['Working...', '\u5de5\u4f5c\u4e2d...'],
+    ['Viewed', '\u5df2\u67e5\u770b'],
+    ['Edited', '\u5df2\u7f16\u8f91'],
+    ['Ran', '\u5df2\u8fd0\u884c'],
+    ['Read', '\u5df2\u8bfb\u53d6'],
+    ['Check git commit log', '\u68c0\u67e5 Git \u63d0\u4ea4\u65e5\u5fd7'],
+    ['Commit changes to git', '\u5411 Git \u63d0\u4ea4\u66f4\u6539'],
+    ['Check git diff stat', '\u68c0\u67e5 Git \u5dee\u5f02\u7edf\u8ba1'],
+    ['Check git status', '\u68c0\u67e5 Git \u72b6\u6001'],
+    ['Capture live screenshot', '\u622a\u53d6\u5b9e\u65f6\u5c4f\u5e55\u622a\u56fe'],
+    ['Test CDPInjector on main page target', '\u5728\u4e3b\u9875\u9762\u76ee\u6807\u4e0a\u6d4b\u8bd5 CDPInjector'],
+    ['Print sample translations cleanly', '\u6e05\u6670\u6253\u5370\u793a\u4f8b\u7ffb\u8bd1'],
+    ['Check window patch status', '\u68c0\u67e5\u7a97\u53e3\u8865\u4e01\u72b6\u6001'],
+    ['Find window references in overlay', '\u5728\u8986\u76d6\u5c42\u4e2d\u67e5\u627e\u7a97\u53e3\u5f15\u7528'],
+    ['Prepare check', '\u51c6\u5907\u68c0\u67e5'],
+    ['Check translateNode in overlay', '\u5728\u8986\u76d6\u5c42\u4e2d\u68c0\u67e5 translateNode'],
+    ['git commit log', 'Git \u63d0\u4ea4\u65e5\u5fd7'],
+    ['git diff stat', 'Git \u5dee\u5f02\u7edf\u8ba1'],
+    ['git status', 'Git \u72b6\u6001'],
+    ['live screenshot', '\u5b9e\u65f6\u5c4f\u5e55\u622a\u56fe'],
+    ['window patch status', '\u7a97\u53e3\u8865\u4e01\u72b6\u6001'],
+    ['window references', '\u7a97\u53e3\u5f15\u7528'],
     ['Show in File Explorer', '\u5728\u6587\u4ef6\u8d44\u6e90\u7ba1\u7406\u5668\u4e2d\u663e\u793a'],
     ['Split', '\u62c6\u5206'],
     ['Mark Unread', '\u6807\u4e3a\u672a\u8bfb'],
@@ -1685,6 +1722,88 @@
 
   // 动态变量与模板匹配（仅针对含捕获组、时间、计算等动态规则）
   const dynamicPatterns = [
+    // 覆盖层与 DOM 任务操作短语
+    [/^(?:\u641c\u7d22|Search)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u641c\u7d22 $1'],
+    [/^(?:\u68c0\u67e5|Check)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u68c0\u67e5 $1'],
+    [/^(?:\u67e5\u627e|Find)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u67e5\u627e $1'],
+    [/^(?:\u6d4b\u8bd5|Test)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u6d4b\u8bd5 $1'],
+    [/^(?:\u641c\u7d22|Search)\s+(.+?)\s+in\s+DOM\s*$/gi, '\u5728 DOM \u4e2d\u641c\u7d22 $1'],
+    [/^(?:\u68c0\u67e5|Check)\s+(.+?)\s+in\s+DOM\s*$/gi, '\u5728 DOM \u4e2d\u68c0\u67e5 $1'],
+    [/^(?:\u67e5\u627e|Find)\s+(.+?)\s+in\s+DOM\s*$/gi, '\u5728 DOM \u4e2d\u67e5\u627e $1'],
+    [/^(?:\u641c\u7d22|Search)\s+(.+?)\s+in\s+window\s*$/gi, '\u5728\u7a97\u53e3\u4e2d\u641c\u7d22 $1'],
+    [/^(?:\u68c0\u67e5|Check)\s+(.+?)\s+in\s+window\s*$/gi, '\u5728\u7a97\u53e3\u4e2d\u68c0\u67e5 $1'],
+    [/^(?:\u67e5\u627e|Find)\s+(.+?)\s+in\s+window\s*$/gi, '\u5728\u7a97\u53e3\u4e2d\u67e5\u627e $1'],
+    [/^(?:\u67e5\u627e|Find)\s+(.+?)\s+in\s+([a-zA-Z0-9_.-]+\.(?:py|js|ts|json))\s*$/gi, '\u5728 $2 \u4e2d\u67e5\u627e $1'],
+    [/^(?:\u68c0\u67e5|Check)\s+(.+?)\s+in\s+([a-zA-Z0-9_.-]+\.(?:py|js|ts|json))\s*$/gi, '\u5728 $2 \u4e2d\u68c0\u67e5 $1'],
+
+    // 相对时间
+    [/^just now$/gi, '\u521a\u521a'],
+    [/^a few seconds ago$/gi, '\u51e0\u79d2\u524d'],
+    // 任务动作与介词短语规则 (例如 Search Check in overlay, Find X in DOM)
+    [/^(?:\u641c\u7d22|Search)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u641c\u7d22 $1'],
+    [/^(?:\u67e5\u627e|Find)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u67e5\u627e $1'],
+    [/^(?:\u68c0\u67e5|Check)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u68c0\u67e5 $1'],
+    [/^(?:\u6d4b\u8bd5|Test)\s+(.+?)\s+in\s+overlay\s*$/gi, '\u5728\u8986\u76d6\u5c42\u4e2d\u6d4b\u8bd5 $1'],
+    [/^(?:\u5df2\u8bfb\u53d6|\u8bfb\u53d6|Read)\s+(.+?)\s+(?:in|from)\s+overlay\s*$/gi, '\u8bfb\u53d6\u8986\u76d6\u5c42\u4e2d\u7684 $1'],
+    [/^(?:\u67e5\u627e|Find)\s+(.+?)\s+in\s+DOM\s*$/gi, '\u5728 DOM \u4e2d\u67e5\u627e $1'],
+    [/^(?:\u68c0\u67e5|Check)\s+(.+?)\s+in\s+DOM\s*$/gi, '\u5728 DOM \u4e2d\u68c0\u67e5 $1'],
+    [/^(?:\u641c\u7d22|Search)\s+(.+?)\s+in\s+DOM\s*$/gi, '\u5728 DOM \u4e2d\u641c\u7d22 $1'],
+    [/\s+in\s+overlay\b/gi, ' \u5728\u8986\u76d6\u5c42\u4e2d'],
+    [/\s+from\s+overlay\b/gi, ' \u4ece\u8986\u76d6\u5c42\u4e2d'],
+    [/\b([a-zA-Z0-9_.-]+)\s+in\s+overlay\b/gi, '\u8986\u76d6\u5c42\u4e2d\u7684 $1'],
+    [/\b([a-zA-Z0-9_.-]+)\s+from\s+overlay\b/gi, '\u8986\u76d6\u5c42\u4e2d\u7684 $1'],
+    [/\b([a-zA-Z0-9_.-]+)\s+in\s+DOM\b/gi, 'DOM \u4e2d\u7684 $1'],
+    [/\b([a-zA-Z0-9_.-]+)\s+in\s+window\b/gi, '\u7a97\u53e3\u4e2d\u7684 $1'],
+    [/\b([a-zA-Z0-9_.-]+)\s+in\s+Antigravity\s+window\b/gi, 'Antigravity \u7a97\u53e3\u4e2d\u7684 $1'],
+    [/\b([a-zA-Z0-9_.-]+)\s+in\s+([a-zA-Z0-9_.-]+\.(?:py|js|json|ts|html|css))\b/gi, '$2 \u4e2d\u7684 $1'],
+
+    // 代码结构与行号
+    [/\blines\s+(\d+)\s*-\s*(\d+)\s+of\s+([a-zA-Z0-9_.-]+)\b/gi, '$3 \u7b2c $1-$2 \u884c'],
+    [/\blines\s+(\d+)\s*-\s*(\d+)\b/gi, '\u7b2c $1-$2 \u884c'],
+    [/\btop\s+of\s+([a-zA-Z0-9_.-]+)\b/gi, '$1 \u9876\u90e8'],
+    [/\bstart\s+of\s+([a-zA-Z0-9_.-]+)\s+function\b/gi, '$1 \u51fd\u6570\u5f00\u5934'],
+    [/\b([a-zA-Z0-9_.-]+)\s+function\b/gi, '$1 \u51fd\u6570'],
+    [/\b([a-zA-Z0-9_.-]+)\s+definition\b/gi, '$1 \u5b9a\u4e49'],
+    [/\b([a-zA-Z0-9_.-]+)\s+implementation\b/gi, '$1 \u5b9e\u73b0'],
+    [/\b([a-zA-Z0-9_.-]+)\s+structure\b/gi, '$1 \u7ed3\u6784'],
+    [/\b([a-zA-Z0-9_.-]+)\s+code\b/gi, '$1 \u4ee3\u7801'],
+    [/\b([a-zA-Z0-9_.-]+)\s+details\b/gi, '$1 \u8be6\u60c5'],
+    [/\b([a-zA-Z0-9_.-]+)\s+loop\b/gi, '$1 \u5faa\u73af'],
+    [/\b([a-zA-Z0-9_.-]+)\s+properties\b/gi, '$1 \u5c5e\u6027'],
+    [/\b([a-zA-Z0-9_.-]+)\s+handling\b/gi, '$1 \u5904\u7406'],
+    [/\b([a-zA-Z0-9_.-]+)\s+status\b/gi, '$1 \u72b6\u6001'],
+    [/\b([a-zA-Z0-9_.-]+)\s+nodes?\b/gi, '$1 \u8282\u70b9'],
+    [/\b([a-zA-Z0-9_.-]+)\s+elements?\b/gi, '$1 \u5143\u7d20'],
+    [/\b([a-zA-Z0-9_.-]+)\s+targets?\b/gi, '$1 \u76ee\u6807'],
+    [/\b([a-zA-Z0-9_.-]+)\s+flags?\b/gi, '$1 \u6807\u5fd7'],
+
+    // 常见对象与短语
+    [/\bgit commit log\b/gi, 'Git \u63d0\u4ea4\u65e5\u5fd7'],
+    [/\bchanges to git\b/gi, '\u66f4\u6539\u5230 Git'],
+    [/\bgit diff stat\b/gi, 'Git \u53d8\u66f4\u7edf\u8ba1'],
+    [/\bgit diff\b/gi, 'Git \u5dee\u5f02'],
+    [/\bgit status\b/gi, 'Git \u72b6\u6001'],
+    [/\blive screenshot\b/gi, '\u5b9e\u65f6\u5c4f\u5e55\u622a\u56fe'],
+    [/\bwindow patch status\b/gi, '\u7a97\u53e3\u8865\u4e01\u72b6\u6001'],
+    [/\bwindow references in overlay\b/gi, '\u8986\u76d6\u5c42\u4e2d\u7684\u7a97\u53e3\u5f15\u7528'],
+    [/\boverlay script\b/gi, '\u8986\u76d6\u5c42\u811a\u672c'],
+    [/\bDOM hierarchy\b/gi, 'DOM \u5c42\u7ea7'],
+    [/\bDOM texts?\b/gi, 'DOM \u6587\u672c'],
+    [/\bvisible text elements?\b/gi, '\u53ef\u89c1\u6587\u672c\u5143\u7d20'],
+    [/\bremaining English text\b/gi, '\u5269\u4f59\u82f1\u6587\u6587\u672c'],
+    [/\bEnglish texts?\b/gi, '\u82f1\u6587\u6587\u672c'],
+    [/\bclean state\b/gi, '\u5e72\u51c0\u72b6\u6001'],
+    [/\bmain target\b/gi, '\u4e3b\u76ee\u6807'],
+    [/\ball CDP targets\b/gi, '\u6240\u6709 CDP \u76ee\u6807'],
+    [/\bCDP targets?\b/gi, 'CDP \u76ee\u6807'],
+    [/\bno mojibake\b/gi, '\u65e0\u4e71\u7801'],
+    [/\bcleanly\b/gi, '\u6e05\u6670\u683c\u5f0f'],
+    [/\bto git\b/gi, '\u5230 Git'],
+    [/\bon port\s+(\d+)\b/gi, '\u5728\u7aef\u53e3 $1 \u4e0a'],
+    [/\bon main page target\b/gi, '\u5728\u4e3b\u9875\u9762\u76ee\u6807\u4e0a'],
+    [/\bfor untranslated elements\b/gi, '\u9488\u5bf9\u672a\u7ffb\u8bd1\u5143\u7d20'],
+    [/\bfor Extensions\b/gi, '\u9488\u5bf9\u6269\u5c55'],
+    [/\bif patch is installed on main target\b/gi, '\u4e3b\u76ee\u6807\u662f\u5426\u5df2\u5b89\u88c5\u8865\u4e01'],
     // 相对时间
     [/^just now$/gi, '\u521a\u521a'],
     [/^a few seconds ago$/gi, '\u51e0\u79d2\u524d'],
@@ -1925,7 +2044,7 @@
     if (!element) return false;
 
     // 跳过代码与编辑区（textarea 放到下方输入区规则中，保留自身 placeholder/aria-label 翻译）
-    if (element.closest('script, style, code, pre, .xterm, .monaco-editor')) {
+    if (element.closest('script, style, code, pre, .xterm, .monaco-editor, .file-viewer-root, [class*="file-viewer"], [class*="code-editor"], [class*="code-line"], .line-content, .token, [class*="editor-content"], [class*="cm-editor"], [class*="cm-line"], [class*="monaco"]')) {
       return true;
     }
 
@@ -1956,6 +2075,12 @@
 
   function shouldSkip(node) {
     if (shouldSkipSubtree(node)) return true;
+    // 关键状态、步骤动作与相对时间元数据一律不跳过
+    const rawVal = (node.nodeValue || '').trim();
+    if (/^(Analyzed|Created|Working|Working\.\.\.|just now|Ran|Read|Edited|Viewed|Local Checkout)$/i.test(rawVal)) {
+      return false;
+    }
+
     const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
     if (!element) return false;
 
@@ -1982,6 +2107,20 @@
   }
 
   const antigravityContainerSelector = [
+    '[role="menu"]',
+    '[role="menuitem"]',
+    '[role="tooltip"]',
+    '[data-radix-popper-content-wrapper]',
+    '[data-radix-menu-content]',
+    '[class*="menu"]',
+    '[class*="popover"]',
+    '[class*="dropdown"]',
+    '[class*="floating"]',
+    '[class*="tooltip"]',
+    '[class*="picker"]',
+    '[class*="selector"]',
+    '[class*="context-menu"]',
+
     '[class*="antigravity"]',
     '[id*="antigravity"]',
     '[class*="jetski"]',
