@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -55,6 +56,23 @@ class AntigravityLauncher:
         if not app_path or not os.path.exists(app_path):
             return False, f"未找到 Antigravity 应用程序路径:\n{app_path}\n请点击【浏览】选择正确的 Antigravity.exe。"
 
+        enable_hans = self.config_manager.get("enable_hans", True)
+        port = int(self.config_manager.get("debugging_port", 58321))
+
+        # Check if Antigravity is already running
+        running = is_process_running("Antigravity.exe")
+        port_accessible = False
+        if running and enable_hans:
+            targets = CDPInjector(port=port).fetch_targets()
+            if targets:
+                port_accessible = True
+
+            # If already running without debugging port, restart it so debugging flag takes effect
+            if not port_accessible:
+                self._log("[启动器] 检测到后台已有运行中的 Antigravity 实例（未开启汉化调试端口），正在重启以生效...")
+                terminate_running_instances("Antigravity.exe")
+                time.sleep(1.5)
+
         # Stop existing injector if any
         if self.injector:
             self.injector.stop_monitoring()
@@ -85,8 +103,6 @@ class AntigravityLauncher:
 
         # 3. Command-line arguments
         args = [app_path]
-        enable_hans = self.config_manager.get("enable_hans", True)
-        port = int(self.config_manager.get("debugging_port", 58321))
 
         if enable_hans:
             # Add Chrome remote debugging port for CDP injection
@@ -94,31 +110,35 @@ class AntigravityLauncher:
             args.append("--remote-debugging-address=127.0.0.1")
             self._log(f"[启动器] 已开启调试注入端口: {port}（中文汉化模式）")
 
-            # Initialize CDP Injector
+            # Initialize and start CDP Injector
             self.injector = CDPInjector(port=port, on_status=self.on_log)
             self.injector.start_monitoring()
         else:
             self._log("[启动器] 原生模式启动（未开启中文汉化）")
 
-        # 4. Spawn child process
-        app_dir = os.path.dirname(app_path)
-        try:
-            self.process = subprocess.Popen(
-                args,
-                cwd=app_dir,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
-            self._log(f"[启动器] Antigravity 启动成功 (PID: {self.process.pid})")
-            return True, f"启动成功 (PID: {self.process.pid})"
-        except Exception as e:
-            if self.injector:
-                self.injector.stop_monitoring()
-                self.injector = None
-            self._log(f"[启动器错误] 启动进程失败: {e}")
-            return False, f"启动失败: {e}"
+        # 4. Spawn child process (if not already running with active debug port)
+        if not (running and port_accessible):
+            app_dir = os.path.dirname(app_path)
+            try:
+                self.process = subprocess.Popen(
+                    args,
+                    cwd=app_dir,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                )
+                self._log(f"[启动器] Antigravity 启动成功 (PID: {self.process.pid})")
+                return True, f"启动成功 (PID: {self.process.pid})"
+            except Exception as e:
+                if self.injector:
+                    self.injector.stop_monitoring()
+                    self.injector = None
+                self._log(f"[启动器错误] 启动进程失败: {e}")
+                return False, f"启动失败: {e}"
+        else:
+            self._log("[启动器] 已复用当前正在运行且已开启调试端口的实例。")
+            return True, "已连接到当前运行中的实例并生效汉化"
 
     def stop_injector(self) -> None:
         """Stop localization watcher if running."""
