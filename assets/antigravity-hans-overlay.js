@@ -18,6 +18,34 @@
   };
 
   const phrases = new Map([
+    ['Ask anything', '向 Antigravity 提问'],
+    ['Type a message', '输入消息'],
+    ['Interactive guide to design and create a scheduled background automation.', '设计和创建计划后台自动化的交互式指南。'],
+    ['Automatically migrate legacy workflows to modern skills across global and workspace configurations.', '在全局和工作区配置中将传统工作流自动迁移为新版技能。'],
+    ['How to manage and create plugins', '如何管理和创建插件'],
+    ['Discover UI plugin panels relevant to the current task and surface a one-click pill in chat to open (toggle) them in the side pane.', '发现与当前任务相关的 UI 插件面板，并在聊天中提供一键展开按钮。'],
+    ['All files', '所有文件'],
+    ['Accept All', '全部接受'],
+    ['Reject All', '全部拒绝'],
+    // === 用户反馈补充词条与快捷菜单 ===
+    ['Sort Projects', '排序项目'],
+    ['Sort Conversations', '排序对话'],
+    ['Auto Pin', '自动固定'],
+    ['Ask anything, @ to mention, / for actions', '向 Antigravity 提问，输入 @ 引用，输入 / 选择操作'],
+
+    // 斜杠命令提示说明
+    ['Run until the specified goal is completely finished.', '持续运行，直至指定目标完全完成。'],
+    ['Compact the conversation now (summarize history to free up the context window).', '立即压缩对话（总结历史记录以释放上下文窗口）。'],
+    ['Run an instruction on a recurring schedule or as a one-time timer.', '按定时计划循环运行指令，或设置一次性定时器。'],
+    ['Invoke a browser agent for web tasks.', '调用浏览器智能体执行网页任务。'],
+    ['Plan your implementation before making changes.', '在修改代码前规划实施方案。'],
+    ['Plan implementation through an interactive interview to stress-test your ideas.', '通过交互式访谈推演方案，压力测试设计思路。'],
+    ['Run a team of specialized subagents working together on your project.', '启动专门的子智能体团队协同处理项目。'],
+    ['Teach the agent to remember your preferences and project conventions.', '训练智能体记住你的偏好和项目规范。'],
+    ['Deep thinking, strategic planning, multiple perspectives, and rigorous verification.', '深度思考、战略规划、多视角分析与严格验证。'],
+
+    // 关键按钮
+    ['Review', '审核'],
     ['Provides a comprehensive guide, quick reference, and sitemap for Google Antigravity (AGY), including the Antigravity CLI (agy), Antigravity 2.0, Antigravity IDE, Python SDK, slash commands, keybindings, and customizations (skills, rules, MCP, sidecars). Activate this skill when the user asks questions about how to use, configure, or customize Antigravity, AGY, the agy CLI, the Antigravity IDE, or Antigravity 2.0.', '提供 Google Antigravity (AGY) 的全面指南、快速参考与站点地图，包括 Antigravity CLI (agy)、Antigravity 2.0、Antigravity IDE、Python SDK、斜杠命令、快捷键及自定义项（技能、规则、MCP、Sidecar）。当用户询问如何使用、配置或自定义 Antigravity、AGY、agy CLI、Antigravity IDE 或 Antigravity 2.0 时激活此技能。'],
     ['Within each group, models share a weekly limit and a 5-hour limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. The 5-hour limit smooths out aggregate demand to fairly distribute global capacity across all users, while your weekly limit is tied directly to your individual tier.', '在每个分组中，模型共享每周限额和 5 小时限额。额度的消耗与 Token 的成本成比例。因此，使用较短的任务或更具性价比的模型可以让限额维持更久。5 小时限额平滑了总体需求，以便在所有用户之间公平地分配全局容量，而您的每周限额则直接与您的个人套餐等级挂钩。'],
     ['Allow the agent to automatically view and edit files outside the current workspace. Use with caution: this gives the agent access to additional potentially-relevant information, but also allows the agent to access credential files, secrets, and other files outside of the workspace that could be targeted in prompt injection attacks or other exploits by malicious actors.', '允许智能体自动查看和编辑当前工作区之外的文件。请谨慎使用：这会让智能体访问更多可能相关的信息，但也会允许其访问凭据文件、机密以及工作区外的其他文件，这些文件可能成为提示词注入攻击或其他恶意利用的目标。'],
@@ -1546,6 +1574,20 @@
 
   // 动态变量与模板匹配（仅针对含捕获组、时间、计算等动态规则）
   const dynamicPatterns = [
+    // 聊天区任务卡片与文件变更
+    [/(\d+)\s*files?\s*changed\b/gi, '$1 个文件已修改'],
+    [/(\d+)\s*tasks?\s*running\b/gi, '$1 个任务运行中'],
+    [/(\d+)\s*tasks?\s*(?:completed|finished)\b/gi, '$1 个任务已完成'],
+    [/(\d+)\s*tasks?\s*in progress\b/gi, '$1 个任务进行中'],
+    [/^(\d+)\s*tasks?$/gi, '$1 个任务'],
+
+    // 相对时间简写 (例如 47m ago, 2h ago, 5s ago, 3d ago)
+    [/(\d+)\s*m\s*ago\b/gi, '$1 分钟前'],
+    [/(\d+)\s*h\s*ago\b/gi, '$1 小时前'],
+    [/(\d+)\s*s\s*ago\b/gi, '$1 秒前'],
+    [/(\d+)\s*d\s*ago\b/gi, '$1 天前'],
+    [/(\d+)\s*w\s*ago\b/gi, '$1 周前'],
+    [/(\d+)\s*mo\s*ago\b/gi, '$1 个月前'],
 
     // 动态时间与耗时
     [/Worked for ((?:\d+\s*[dhms]\b\s*)+)/gi, (_m, dur) => '已工作 ' + formatShortDuration(dur)],
@@ -1741,19 +1783,22 @@
     const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
     if (!element) return false;
 
-    // 跳过侧边栏会话历史列表中的会话名称（保留行内操作按钮）
-    const historyItem = element.closest('[data-testid="conversation-row-sidebar"], [data-cascade-id], .past-conversations, .conversation-list, .history-list, .conversations-list, [data-testid="history-list"], [data-testid="past-conversations"], .conversation-item, .convo-item, .history-item, [class*="history-item"], [class*="convo-item"]');
-    if (historyItem) {
-      const isActionBtn = element.closest('button[aria-label], button[title], [class*="delete"], [class*="pin"], [class*="archive"]');
-      const isHistoryMeta = node.nodeType === Node.TEXT_NODE && element.closest('span.text-xs');
-      if (!isActionBtn && !isHistoryMeta) return true;
+    // 仅在侧边栏导航区内跳过会话历史名称（保留行内操作按钮及元数据）
+    const inSidebar = element.closest('aside, nav, [class*="sidebar"], [data-testid="sidebar"]');
+    if (inSidebar) {
+      const historyItem = element.closest('[data-testid="conversation-row-sidebar"], .past-conversations, .conversation-list, .history-list, .conversations-list, [data-testid="history-list"], [data-testid="past-conversations"], .conversation-item, .convo-item, .history-item, [class*="history-item"], [class*="convo-item"]');
+      if (historyItem) {
+        const isActionBtn = element.closest('button, [role="button"], [class*="action"], [class*="button-container"]');
+        const isHistoryMeta = node.nodeType === Node.TEXT_NODE && element.closest('span.text-xs');
+        if (!isActionBtn && !isHistoryMeta) return true;
+      }
     }
 
-    // 跳过回复正文（保留控件、折叠步骤栏、变更概览与系统提示卡片）
+    // 跳过回复正文（但严格保留控件、按钮、变更卡片头、审查按钮与状态提示）
     const agentResponse = element.closest('[aria-label="Agent response"], [aria-label="智能体回复"]');
     if (agentResponse) {
       if (node.nodeType === Node.ELEMENT_NODE && element === agentResponse) return false;
-      const isInteractive = element.closest('button, [role="button"], [class*="action"], [class*="button-container"], [data-testid="cleared-step-notice"], .files-changed-header');
+      const isInteractive = element.closest('button, [role="button"], [class*="action"], [class*="button-container"], [data-testid="cleared-step-notice"], .files-changed-header, [class*="files-changed"], [class*="review"], [class*="task"], [class*="status"], .truncate');
       if (!isInteractive) return true;
     }
 
@@ -2009,6 +2054,16 @@
       // 监听容器身份变化。Settings 页面经常先挂载空节点，再异步补 class/id。
       attributeFilter: ['aria-label', 'title', 'placeholder', 'alt', 'class', 'id', 'role', 'data-testid'],
     });
+  
+    // 立即执行初始全量扫描
+    if (document.body) translateNode(document.body);
+
+    // 定期巡检未打标的节点，防止虚拟列表动态加载漏翻
+    setInterval(() => {
+      if (!cancelled && document.body) {
+        translateNode(document.body);
+      }
+    }, 2000);
   }
 
   if (document.readyState === 'loading') {
