@@ -13,4 +13,10 @@ bin/*.exe
 upstream/
 config.json
 *.vbs
+node_modules/
+config.json.bak
+config.json.*.tmp
+config.json.bak.*.tmp
+config.json.invalid-*
+.runtime/
 

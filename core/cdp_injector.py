@@ -1,239 +1,172 @@
-"""CDP (Chrome DevTools Protocol) dynamic injector for Antigravity localization.
-
-Replicates the robust injection & inspection logic of yuexps/Antigravity-Hans in pure Python:
-1. Regularly polls Antigravity's remote debugging port (default: 58321).
-2. For every active page / webview target, checks if `window.__antigravityZhPatchInstalled`
-   and `window.__observedDocument === document` are present.
-3. Automatically injects on startup, document reload, URL navigation, and new sub-views.
-4. Robust CDP message routing that correctly filters asynchronous notifications.
-"""
-
+"""Verified, direct CDP connections with one reusable socket per app page."""
 import hashlib
 import json
 import logging
 import threading
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlsplit
+from dataclasses import dataclass
 
-try:
-    from websockets.sync.client import connect as ws_connect
-    HAS_WEBSOCKETS_LIB = True
-except ImportError:
-    HAS_WEBSOCKETS_LIB = False
+from websockets.sync.client import connect
 
-logger = logging.getLogger("CDPInjector")
+from core.proxy_checker import redact
+
+logger = logging.getLogger("antigravity_launcher.cdp")
+FEATURE_CHECK = """Boolean(document.querySelector(
+'[data-testid="conversation-row-sidebar"],[data-testid="sidebar"],[class*="antigravity"],[class*="jetski"],.monaco-workbench'
+) || (document.title.includes('Antigravity') && document.querySelector('#root, #app')))"""
+
+
+@dataclass(frozen=True)
+class InjectionStatus:
+    cdp_ready: bool = False
+    injected_targets: int = 0
+    error: str = ""
 
 
 class CDPInjector:
-    """Monitors running Antigravity Electron process and injects translation overlay."""
-
-    def __init__(
-        self,
-        port: int = 58321,
-        overlay_path: Optional[str] = None,
-        on_status: Optional[Callable[[str], None]] = None,
-    ):
+    def __init__(self, port=58321, overlay_path=None, on_status=None, port_owner=None, target_owner=None):
         self.port = port
-        self.on_status = on_status or (lambda msg: None)
-        self.running = False
-        self.worker_thread: Optional[threading.Thread] = None
-        self._msg_counter = 0
-        self._counter_lock = threading.Lock()
+        self.port_owner = port_owner or (lambda: False)
+        self.target_owner = target_owner or (lambda url: False)
+        self.on_status = on_status or (lambda message: None)
+        self.overlay_path = Path(overlay_path) if overlay_path else Path(__file__).resolve().parent.parent / "assets/antigravity-hans-overlay.js"
+        source = self.overlay_path.read_text(encoding="utf-8")
+        self.fingerprint = hashlib.sha256(source.encode()).hexdigest()[:16]
+        self.overlay_source = f"window.__antigravityZhPatchRequestedFingerprint = '{self.fingerprint}';\n" + source
+        self._connections = {}
+        self._registrations = {}
+        self._counter = 0
+        self._deadline = None
+        self._stop = threading.Event()
+        self._guard = threading.RLock()
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-        if overlay_path is None:
-            base_dir = Path(__file__).resolve().parent.parent
-            self.overlay_path = base_dir / "assets" / "antigravity-hans-overlay.js"
-        else:
-            self.overlay_path = Path(overlay_path)
-
-        self.raw_overlay = self._load_overlay_source()
-        self.fingerprint = hashlib.sha256(self.raw_overlay.encode("utf-8")).hexdigest()[:16]
-        self.overlay_source = (
-            f"window.__antigravityZhPatchRequestedFingerprint = '{self.fingerprint}';\n"
-            + self.raw_overlay
-        )
-
-    def _next_id(self) -> int:
-        with self._counter_lock:
-            self._msg_counter += 1
-            return self._msg_counter
-
-    def _load_overlay_source(self) -> str:
-        """Read translation script from assets."""
-        if not self.overlay_path.exists():
-            raise FileNotFoundError(f"Overlay script not found: {self.overlay_path}")
-        with open(self.overlay_path, "r", encoding="utf-8") as f:
-            return f.read()
-
-    def _log(self, message: str) -> None:
-        logger.info(message)
-        self.on_status(message)
-
-    def _cdp_call(self, ws, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 4.0) -> Dict[str, Any]:
-        """Send a CDP command and wait for the response matching the request id."""
-        req_id = self._next_id()
-        payload = {"id": req_id, "method": method, "params": params or {}}
-        ws.send(json.dumps(payload))
-        deadline = time.time() + timeout
-
-        while time.time() < deadline:
-            raw = ws.recv(timeout=max(0.1, deadline - time.time()))
-            msg = json.loads(raw)
-            if msg.get("id") == req_id:
-                if "error" in msg:
-                    err_info = msg["error"]
-                    err_msg = err_info.get("message", str(err_info)) if isinstance(err_info, dict) else str(err_info)
-                    raise RuntimeError(f"CDP error in {method}: {err_msg}")
-                return msg
-        raise TimeoutError(f"CDP call timeout for {method} (id={req_id})")
-
-    def fetch_targets(self) -> List[Dict[str, Any]]:
-        """Query http://127.0.0.1:<port>/json/list for debuggable targets."""
-        url = f"http://127.0.0.1:{self.port}/json/list"
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "AntigravityLauncher/1.0"})
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                data = resp.read().decode("utf-8")
-                return json.loads(data)
-        except Exception:
+    def fetch_targets(self):
+        if not self.port_owner():
             return []
+        request = urllib.request.Request(f"http://127.0.0.1:{self.port}/json/list")
+        with self._opener.open(request, timeout=1.0) as response:
+            data = json.loads(response.read(1024 * 1024))
+        if not isinstance(data, list):
+            raise ValueError("调试端口返回了无效页面列表")
+        return data
 
-    def is_target_injected(self, ws_url: str) -> bool:
-        """Check if target's current document has the overlay installed."""
+    def _call(self, ws, method, params=None):
+        if self._stop.is_set():
+            raise InterruptedError("CDP monitoring stopped")
+        self._counter += 1
+        request_id = self._counter
+        ws.send(json.dumps({"id": request_id, "method": method, "params": params or {}}))
+        deadline = time.monotonic() + 2.0
+        if self._deadline is not None:
+            deadline = min(deadline, self._deadline)
+        while not self._stop.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"{method} timed out")
+            message = json.loads(ws.recv(timeout=remaining))
+            if message.get("id") != request_id:
+                continue
+            if "error" in message:
+                raise RuntimeError(f"CDP {method}: {message['error'].get('message', 'failed')}")
+            result = message.get("result", {})
+            if result.get("exceptionDetails"):
+                # Don't log arbitrary page text (may contain conversation content).
+                raise RuntimeError(f"{method}: 页面脚本执行异常")
+            return result
+        raise InterruptedError("CDP monitoring stopped")
+
+    def _evaluate(self, ws, expression):
+        result = self._call(ws, "Runtime.evaluate", {"expression": expression, "returnByValue": True})
+        return result.get("result", {}).get("value")
+
+    def _valid_target(self, target):
+        if not isinstance(target, dict) or target.get("type") not in ("page", "webview", "app"):
+            return False
         try:
-            with ws_connect(ws_url, open_timeout=2.0, close_timeout=1.0) as ws:
-                check_expr = (
-                    f"window.__antigravityZhPatchInstalled === true && "
-                    f"window.__observedDocument === document && "
-                    f"window.__antigravityZhPatchFingerprint === '{self.fingerprint}'"
-                )
-                resp = self._cdp_call(ws, "Runtime.evaluate", {"expression": check_expr, "returnByValue": True}, timeout=2.0)
-                return bool(resp.get("result", {}).get("result", {}).get("value") is True)
-        except Exception:
+            ws = urlsplit(target.get("webSocketDebuggerUrl", ""))
+            return (ws.scheme == "ws" and ws.hostname in ("127.0.0.1", "localhost", "::1") and
+                    ws.port == self.port and not ws.username and not ws.password and
+                    ws.path.startswith("/devtools/page/") and
+                    bool(target.get("id")) and self.target_owner(target.get("url", "")))
+        except (ValueError, OSError):
             return False
 
-    def inject_target(self, target: Dict[str, Any]) -> bool:
-        """Inject overlay into a single target via WebSocket with document verification."""
-        ws_url = target.get("webSocketDebuggerUrl")
-        if not ws_url:
-            return False
-
-        target_id = target.get("id", "")
-        title = target.get("title", "")
-        target_type = target.get("type", "")
-
-        # Only inject page and webview types
-        if target_type not in ("page", "webview", "app", ""):
-            return False
-
-        if not HAS_WEBSOCKETS_LIB:
-            self._log("[CDP] 缺少 websockets 库，无法注入")
-            return False
-
-        try:
-            with ws_connect(ws_url, open_timeout=3.0, close_timeout=1.5) as ws:
-                # 1. Quick check on connection
-                check_expr = (
-                    f"window.__antigravityZhPatchInstalled === true && "
-                    f"window.__observedDocument === document && "
-                    f"window.__antigravityZhPatchFingerprint === '{self.fingerprint}'"
-                )
-                resp = self._cdp_call(ws, "Runtime.evaluate", {"expression": check_expr, "returnByValue": True}, timeout=2.0)
-                if resp.get("result", {}).get("result", {}).get("value") is True:
-                    return True
-
-                # 2. Page.enable
-                try:
-                    self._cdp_call(ws, "Page.enable", {}, timeout=2.0)
-                except Exception:
-                    pass
-
-                # 3. Page.addScriptToEvaluateOnNewDocument (for future navigation & reload)
-                try:
-                    self._cdp_call(
-                        ws,
-                        "Page.addScriptToEvaluateOnNewDocument",
-                        {"source": self.overlay_source},
-                        timeout=3.0,
-                    )
-                except Exception as e:
-                    logger.debug(f"addScriptToEvaluateOnNewDocument: {e}")
-
-                # 4. Runtime.evaluate (immediate execution on existing DOM)
-                self._cdp_call(
-                    ws,
-                    "Runtime.evaluate",
-                    {
-                        "expression": self.overlay_source,
-                        "awaitPromise": False,
-                        "returnByValue": True,
-                    },
-                    timeout=4.0,
-                )
-
-                # 5. Verify installation
-                verify_resp = self._cdp_call(
-                    ws,
-                    "Runtime.evaluate",
-                    {"expression": check_expr, "returnByValue": True},
-                    timeout=2.0,
-                )
-                verified = bool(verify_resp.get("result", {}).get("result", {}).get("value") is True)
-                if verified:
-                    clean_title = (title[:30] if title else target_id[:8])
-                    self._log(f"[CDP] 成功汉化页面: {clean_title} ({target_type})")
-                    return True
-                return False
-        except Exception as e:
-            logger.debug(f"Target injection error for {target_id}: {e}")
-            return False
-
-    def start_monitoring(self) -> None:
-        """Start the background monitor loop to keep injecting targets as they appear."""
-        if self.running:
-            return
-        self.running = True
-        self.worker_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.worker_thread.start()
-        self._log(f"[CDP] 汉化监视服务已启动，正在监听调试端口 {self.port}...")
-
-    def stop_monitoring(self) -> None:
-        """Stop background monitor loop."""
-        self.running = False
-        if self.worker_thread and self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=1.0)
-        self._log("[CDP] 汉化监视服务已停止")
-
-    def _monitor_loop(self) -> None:
-        """Polling loop for CDP targets with continuous health inspection."""
-        consecutive_empty = 0
-        while self.running:
+    def _drop(self, key):
+        with self._guard:
+            ws = self._connections.pop(key, None)
+            self._registrations.pop(key, None)
+        if ws:
             try:
-                targets = self.fetch_targets()
-                if not targets:
-                    consecutive_empty += 1
-                    time.sleep(1.0)
-                    continue
+                ws.close()
+            except Exception:
+                pass
 
-                consecutive_empty = 0
-                for t in targets:
-                    if not self.running:
-                        break
-                    t_type = t.get("type", "")
-                    if t_type not in ("page", "webview", "app", ""):
+    def scan(self, deadline=None):
+        self._deadline = deadline or time.monotonic() + 6.0
+        if self._stop.is_set():
+            return InjectionStatus(error="汉化监视已停止")
+        verified = 0
+        ready = False
+        errors = []
+        try:
+            targets = self.fetch_targets()
+            ready = bool(targets)
+            accepted = [target for target in targets if self._valid_target(target)]
+            keys = {t["webSocketDebuggerUrl"] for t in accepted}
+            for key in list(self._connections):
+                if key not in keys:
+                    self._drop(key)
+            for target in accepted:
+                if self._stop.is_set() or time.monotonic() >= self._deadline:
+                    break
+                key = target["webSocketDebuggerUrl"]
+                try:
+                    ws = self._connections.get(key)
+                    if ws is None:
+                        ws = connect(key, proxy=None, open_timeout=1, close_timeout=0.3, max_size=1024 * 1024)
+                        with self._guard:
+                            if self._stop.is_set():
+                                ws.close()
+                                break
+                            self._connections[key] = ws
+                    if not self._evaluate(ws, FEATURE_CHECK):
+                        self._drop(key)
                         continue
-                    ws_url = t.get("webSocketDebuggerUrl")
-                    if not ws_url:
+                    check = ("window.__antigravityZhPatchInstalled === true && "
+                             "window.__observedDocument === document && "
+                             f"window.__antigravityZhPatchFingerprint === '{self.fingerprint}'")
+                    if self._evaluate(ws, check) is True:
+                        verified += 1
                         continue
+                    if key not in self._registrations:
+                        self._call(ws, "Page.enable")
+                        result = self._call(ws, "Page.addScriptToEvaluateOnNewDocument", {
+                            "source": f"if ({FEATURE_CHECK}) {{\n{self.overlay_source}\n}}"})
+                        self._registrations[key] = result.get("identifier")
+                    # Avoid restarting an initial asynchronous scan on each inspection.
+                    pending = self._evaluate(ws, f"window.__antigravityZhPatchInitializing === '{self.fingerprint}'")
+                    if pending is not True:
+                        self._evaluate(ws, self.overlay_source)
+                    if self._evaluate(ws, check) is True:
+                        verified += 1
+                        self.on_status(f"汉化初始化完成: {target['id'][:12]}")
+                except Exception as exc:
+                    errors.append(redact(exc))
+                    self._drop(key)
+            if not accepted and ready:
+                errors.append("等待可确认身份的应用界面")
+        except Exception as exc:
+            errors.append(redact(exc))
+        message = "; ".join(dict.fromkeys(errors))
+        if message:
+            logger.debug("CDP inspection: %s", message)
+        return InjectionStatus(ready, verified, message)
 
-                    # If not injected or page was reloaded / navigated, inject it!
-                    if not self.is_target_injected(ws_url):
-                        self.inject_target(t)
-
-                time.sleep(1.2)
-            except Exception as e:
-                logger.debug(f"Monitor loop error: {e}")
-                time.sleep(1.5)
+    def stop_monitoring(self):
+        self._stop.set()
+        for key in list(self._connections):
+            self._drop(key)

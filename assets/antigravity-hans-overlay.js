@@ -2,20 +2,33 @@
   if (typeof window === 'undefined') return;
   const fingerprint = window.__antigravityZhPatchRequestedFingerprint || 'app-2.26.0-20261026-r7';
   if (window.__antigravityZhPatchInstalled === true && window.__observedDocument === document && window.__antigravityZhPatchFingerprint === fingerprint) return;
-  const updating = window.__antigravityZhPatchInstalled === true && window.__observedDocument === document;
+  if (window.__antigravityZhPatchInitializing === fingerprint && window.__observedDocument === document) return;
   if (typeof window.__antigravityZhPatchCleanup === 'function') window.__antigravityZhPatchCleanup();
-  window.__antigravityZhPatchInstalled = true;
+  window.__antigravityZhPatchInstalled = false;
+  window.__antigravityZhPatchInitializing = fingerprint;
+  window.__antigravityZhPatchError = null;
   window.__observedDocument = document;
   window.__antigravityZhPatchFingerprint = fingerprint;
   let observer;
   let cancelled = false;
   let flushScheduler;
+  let nodeState = new WeakMap();
+  let attributeState = new WeakMap();
+  const translationCache = new Map();
+  const metrics = { translations: 0, cacheHits: 0, visited: 0, batches: 0, yields: 0 };
+  window.__antigravityZhMetrics = metrics;
   window.__antigravityZhTranslate = translate;
   window.__antigravityZhPatchCleanup = () => {
     cancelled = true;
     observer?.disconnect();
     window.removeEventListener('DOMContentLoaded', run);
     flushScheduler?.cancel();
+    document.removeEventListener('visibilitychange', onVisible);
+    translationCache.clear();
+    nodeState = new WeakMap();
+    attributeState = new WeakMap();
+    window.__antigravityZhPatchInstalled = false;
+    window.__antigravityZhPatchInitializing = null;
   };
 
   const phrases = new Map([
@@ -1987,6 +2000,22 @@
   // 核心翻译流水线：精准完全匹配优先 -> 动态进度栏 -> 长句及复合短语子串 -> 动态变量规则
   function translate(value) {
     if (!value || !/[A-Za-z]/.test(value)) return value;
+    if (translationCache.has(value)) {
+      const result = translationCache.get(value);
+      translationCache.delete(value);
+      translationCache.set(value, result);
+      metrics.cacheHits++;
+      return result;
+    }
+    metrics.translations++;
+    const result = translateUncached(value);
+    translationCache.set(value, result);
+    if (translationCache.size > 2048) translationCache.delete(translationCache.keys().next().value);
+    return result;
+  }
+
+  function translateUncached(value) {
+    if (!value || !/[A-Za-z]/.test(value)) return value;
     // 项目名称属于数据；完整删除模板须先于通用词条处理。
     // 观察器重处理译文时，也不能改写名称中的英文。
     if (/^永久删除项目“[\s\S]*”及其中的 \d+ 个活跃对话。$/.test(value.trim())) return value;
@@ -2044,7 +2073,7 @@
     if (!element) return false;
 
     // 跳过代码与编辑区（textarea 放到下方输入区规则中，保留自身 placeholder/aria-label 翻译）
-    if (element.closest('script, style, code, pre, .xterm, .monaco-editor, .file-viewer-root, [class*="file-viewer"], [class*="code-editor"], [class*="code-line"], .line-content, .token, [class*="editor-content"], [class*="cm-editor"], [class*="cm-line"], [class*="monaco"]')) {
+    if (element.closest('script, style, code, pre, .xterm, .monaco-editor, .file-viewer-root, [class*="file-viewer"], [class*="code-editor"], [class*="code-line"], .line-content, .token, [class*="editor-content"], .cm-editor, .cm-line')) {
       return true;
     }
 
@@ -2075,12 +2104,6 @@
 
   function shouldSkip(node) {
     if (shouldSkipSubtree(node)) return true;
-    // 关键状态、步骤动作与相对时间元数据一律不跳过
-    const rawVal = (node.nodeValue || '').trim();
-    if (/^(Analyzed|Created|Working|Working\.\.\.|just now|Ran|Read|Edited|Viewed|Local Checkout)$/i.test(rawVal)) {
-      return false;
-    }
-
     const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
     if (!element) return false;
 
@@ -2099,7 +2122,7 @@
     const agentResponse = element.closest('[aria-label="Agent response"], [aria-label="智能体回复"]');
     if (agentResponse) {
       if (node.nodeType === Node.ELEMENT_NODE && element === agentResponse) return false;
-      const isInteractive = element.closest('button, [role="button"], [class*="action"], [class*="button-container"], [data-testid="cleared-step-notice"], .files-changed-header, [class*="files-changed"], [class*="review"], [class*="task"], [class*="status"], [class*="step"], [data-step-id], [class*="card"], .truncate');
+      const isInteractive = element.closest('button, [role="button"], [data-testid="cleared-step-notice"], .files-changed-header, .step-header, [data-testid="task-status"], [role="status"]');
       if (!isInteractive) return true;
     }
 
@@ -2233,169 +2256,158 @@
     return true;
   }
 
+  const translatedAttributes = ['aria-label', 'title', 'placeholder', 'data-placeholder', 'alt'];
+
   function translateElement(element) {
-    if (shouldSkip(element)) return;
-    if (!isInAntigravityContainer(element)) return;
+    if (shouldSkip(element) || !isInAntigravityContainer(element)) return;
     translateComposedElement(element);
-    for (const attr of ['aria-label', 'title', 'placeholder', 'data-placeholder', 'alt']) {
+    const previous = attributeState.get(element) || {};
+    for (const attr of translatedAttributes) {
       const value = element.getAttribute?.(attr);
-      if (!value) continue;
+      if (!value || previous[attr] === value) continue;
       const translated = translate(value);
       if (translated !== value) element.setAttribute(attr, translated);
+      previous[attr] = translated;
+    }
+    attributeState.set(element, previous);
+  }
+
+  function processNode(node) {
+    metrics.visited++;
+    if (shouldSkip(node) || !isInAntigravityContainer(node)) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const value = node.nodeValue || '';
+      if (nodeState.get(node) === value) return;
+      const result = translate(value);
+      if (result !== value) node.nodeValue = result;
+      nodeState.set(node, result);
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      translateElement(node);
     }
   }
 
-  function translateNode(root) {
-    if (!root) return;
-    if (shouldSkipSubtree(root)) return;
-    if (root.nodeType === Node.TEXT_NODE) {
-      if (shouldSkip(root)) return;
-      if (!isInAntigravityContainer(root)) return;
-      const val = root.nodeValue || '';
-      if (root.__zh_patched && root.__zh_lastVal === val) return;
-      const translated = translate(val);
-      if (translated !== val) {
-        root.nodeValue = translated;
-        root.__zh_patched = true;
-        root.__zh_lastVal = translated;
-      } else if (/[\u4e00-\u9fa5]/.test(val)) {
-        root.__zh_patched = true;
-        root.__zh_lastVal = val;
+  function* walk(root) {
+    if (!root || !root.isConnected || shouldSkipSubtree(root)) return;
+    yield root;
+    if (root.nodeType === Node.TEXT_NODE) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode(node) {
+        return shouldSkipSubtree(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
       }
-      return;
-    }
-    if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) return;
-    if (root.nodeType === Node.ELEMENT_NODE) {
-      if (!root.__zh_patched && !shouldSkip(root)) {
-        // 节点可能先被插入、后被 React/Vue 补上容器 class。未处于目标容器时
-        // 不能标记为已处理，否则后续容器就绪后不会再翻译它的子树。
-        if (isInAntigravityContainer(root)) {
-          translateElement(root);
-          root.__zh_patched = true;
-        }
-      }
-    }
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (shouldSkip(node)) continue;
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (!isInAntigravityContainer(node)) continue;
-        const val = node.nodeValue || '';
-        if (node.__zh_patched && node.__zh_lastVal === val) continue;
-        const translated = translate(val);
-        if (translated !== val) {
-          node.nodeValue = translated;
-          node.__zh_patched = true;
-          node.__zh_lastVal = translated;
-        } else if (/[\u4e00-\u9fa5]/.test(val)) {
-          node.__zh_patched = true;
-          node.__zh_lastVal = val;
-        }
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        if (node.__zh_patched) continue;
-        if (!isInAntigravityContainer(node)) continue;
-        translateElement(node);
-        node.__zh_patched = true;
-      }
-    }
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) yield node;
   }
 
-  // 把同一轮内的多个变更批次累积到一个定时器，避免每个 MutationObserver 回调各建一个 timer。
-  function createFlushScheduler(flush) {
+  function createFlushScheduler() {
     let timer = null;
-    let nodes = [];
-    let elements = [];
+    const roots = new Set();
+    const elements = new Set();
+    let active = null;
+    let firstScan = true;
+    const arm = () => {
+      if (timer === null && !cancelled) timer = setTimeout(flush, 0);
+    };
     const cancel = () => {
       if (timer !== null) clearTimeout(timer);
       timer = null;
-      nodes = [];
-      elements = [];
+      roots.clear();
+      elements.clear();
+      active = null;
     };
-    const schedule = (newNodes, newElements) => {
-      for (const node of newNodes) nodes.push(node);
-      for (const element of newElements) elements.push(element);
-      if (timer !== null) return;
-      timer = setTimeout(() => {
-        timer = null;
-        const batchNodes = nodes;
-        const batchElements = elements;
-        nodes = [];
-        elements = [];
-        flush(batchNodes, batchElements);
-      }, 0);
-    };
+    function flush() {
+      timer = null;
+      if (cancelled) return;
+      const started = performance.now();
+      metrics.batches++;
+      try {
+        do {
+          if (!active && roots.size) {
+            const root = roots.values().next().value;
+            roots.delete(root);
+            active = walk(root);
+          }
+          if (active) {
+            const next = active.next();
+            if (next.done) active = null;
+            else processNode(next.value);
+          } else if (elements.size) {
+            const element = elements.values().next().value;
+            elements.delete(element);
+            if (element.isConnected) translateElement(element);
+          } else break;
+        } while (performance.now() - started < 8);
+        if (active || roots.size || elements.size) {
+          metrics.yields++;
+          arm();
+        } else if (firstScan) {
+          firstScan = false;
+          window.__antigravityZhPatchInitializing = null;
+          window.__antigravityZhPatchInstalled = true;
+        }
+      } catch (error) {
+        window.__antigravityZhPatchError = String(error?.message || 'initialization failed');
+        window.__antigravityZhPatchCleanup();
+      }
+    }
+    function schedule(newRoots = [], newElements = []) {
+      if (cancelled) return;
+      for (const root of newRoots) {
+        if (!root?.isConnected) continue;
+        let covered = false;
+        for (const pending of roots) {
+          if (pending === root || pending.contains?.(root)) { covered = true; break; }
+          if (root.contains?.(pending)) roots.delete(pending);
+        }
+        if (!covered) roots.add(root);
+      }
+      for (const element of newElements) if (element?.isConnected) elements.add(element);
+      if (roots.size || elements.size || active) arm();
+    }
     return { schedule, cancel };
   }
 
+  function onVisible() {
+    if (!cancelled && document.visibilityState === 'visible') flushScheduler?.schedule([document]);
+  }
+
   function run() {
-    if (cancelled) return;
-    document.documentElement.lang = 'zh-CN';
-    if (updating) {
-      const stale = document.createTreeWalker(document, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-      for (let node = stale.nextNode(); node; node = stale.nextNode()) node.__zh_patched = false;
-    }
-    translateNode(document);
-
-    flushScheduler = createFlushScheduler((batchNodes, batchElements) => {
-      if (cancelled) return;
-      for (const node of batchNodes) translateNode(node);
-      for (const element of batchElements) translateElement(element);
-    });
-
-    observer = new MutationObserver((mutations) => {
-      const nodesToTranslate = [];
-      const elementsToTranslate = [];
-
-      for (const mutation of mutations) {
-        if (mutation.type === 'characterData') {
-          const target = mutation.target;
-          target.__zh_patched = false;
-          nodesToTranslate.push(target);
-        } else if (mutation.type === 'attributes') {
-          const target = mutation.target;
-          target.__zh_patched = false;
-          // 容器身份变化时要重新扫描整个子树；仅翻译属性本身会漏掉此前
-          // 因未命中白名单而尚未处理的 Settings 子节点。
-          if (mutation.attributeName === 'class' || mutation.attributeName === 'id' ||
-              mutation.attributeName === 'role' || mutation.attributeName === 'data-testid') {
-            nodesToTranslate.push(target);
+    if (cancelled || flushScheduler) return;
+    try {
+      document.documentElement.lang = 'zh-CN';
+      flushScheduler = createFlushScheduler();
+      observer = new MutationObserver((mutations) => {
+        const roots = [];
+        const elements = [];
+        for (const mutation of mutations) {
+          if (mutation.type === 'characterData') {
+            roots.push(mutation.target);
+          } else if (mutation.type === 'attributes') {
+            if (['class', 'id', 'role', 'data-testid', 'contenteditable'].includes(mutation.attributeName)) {
+              // Cache only translation work; re-check eligibility after container changes.
+              nodeState = new WeakMap();
+              attributeState = new WeakMap();
+              roots.push(mutation.target);
+            } else {
+              elements.push(mutation.target);
+            }
           } else {
-            elementsToTranslate.push(target);
-          }
-        } else {
-          for (const node of mutation.addedNodes) {
-            nodesToTranslate.push(node);
+            roots.push(...mutation.addedNodes);
           }
         }
-      }
-
-      if (nodesToTranslate.length > 0 || elementsToTranslate.length > 0) {
-        flushScheduler.schedule(nodesToTranslate, elementsToTranslate);
-      }
-    });
-    observer.observe(document, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      // 监听容器身份变化。Settings 页面经常先挂载空节点，再异步补 class/id。
-      attributeFilter: ['aria-label', 'title', 'placeholder', 'alt', 'class', 'id', 'role', 'data-testid'],
-    });
-  
-    // 立即执行初始全量扫描
-    if (document.body) translateNode(document.body);
-
-    // 定期巡检未打标的节点，防止虚拟列表动态加载漏翻
-    setInterval(() => {
-      if (!cancelled && document.body) {
-        translateNode(document.body);
-      }
-    }, 2000);
+        flushScheduler.schedule(roots, elements);
+      });
+      observer.observe(document, {
+        subtree: true, childList: true, characterData: true, attributes: true,
+        attributeFilter: [...translatedAttributes, 'class', 'id', 'role', 'data-testid', 'contenteditable']
+      });
+      document.addEventListener('visibilitychange', onVisible);
+      flushScheduler.schedule([document]);
+    } catch (error) {
+      window.__antigravityZhPatchError = String(error?.message || 'initialization failed');
+      window.__antigravityZhPatchCleanup();
+    }
   }
 
-  if (document.readyState === 'loading') {
-    window.addEventListener('DOMContentLoaded', run, { once: true });
-  } else {
-    run();
-  }
+  if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', run, { once: true });
+  else run();
 })();

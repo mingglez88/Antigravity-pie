@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="tile" x1="24" y1="16" x2="228" y2="244" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#388eff"/><stop offset=".55" stop-color="#1165e9"/><stop offset="1" stop-color="#0843b6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="64" cy="36" r="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#bcf4ff" stop-opacity=".36"/><stop offset="1" stop-color="#bcf4ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sphere" cx="110" cy="91" r="75" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".48" stop-color="#e4f9ff"/><stop offset="1" stop-color="#72c6ff"/>
+    </radialGradient>
+    <linearGradient id="orbit" x1="48" y1="172" x2="210" y2="96" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#77d7ff"/><stop offset=".55" stop-color="#d8f7ff"/><stop offset="1" stop-color="#fff"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#tile)"/>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#glow)"/>
+  <rect x="9" y="9" width="238" height="238" rx="55" fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="2"/>
+  <ellipse cx="128" cy="139" rx="86" ry="30" transform="rotate(-28 128 139)" fill="none" stroke="#8cd9ff" stroke-opacity=".65" stroke-width="12"/>
+  <circle cx="128" cy="116" r="44" fill="#083a9d" opacity=".16" transform="translate(0 8)"/>
+  <circle cx="128" cy="112" r="44" fill="url(#sphere)"/>
+  <path d="M 52 174 C 67 203 184 147 204 101" fill="none" stroke="url(#orbit)" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="187" cy="65" r="8" fill="#e3fbff"/>
+</svg>

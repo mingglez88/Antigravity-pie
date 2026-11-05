@@ -4,385 +4,462 @@ import os
 import sys
 import threading
 import time
+import queue
+import logging
+from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
-from core.app_launcher import AntigravityLauncher, is_process_running, terminate_running_instances
+from core.app_launcher import AntigravityLauncher
 from core.config_manager import ConfigManager
-from core.proxy_checker import check_proxy_http
+from core.proxy_checker import check_proxy_http, redact
 from core.shortcut_helper import create_all_desktop_shortcuts
 
 
 class MainWindow(tk.Tk):
     """Main launcher interface."""
 
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager: ConfigManager, events=None, hidden=False, ensure_instance=None, on_exit=None, on_applied=None, tray_factory=None):
         super().__init__()
+        self.withdraw()
+        self.events = events if events is not None else queue.Queue()
+        self.hidden = hidden
+        self.busy = False
+        self.closed = False
+        self.exit_when_idle = False
+        self.tray = None
+        self._pump_job = None
+        self._startup_job = None
+        self.proxy_generation = 0
+        self.ensure_instance = ensure_instance or (lambda path: True)
+        self.on_exit = on_exit or (lambda: None)
+        self.on_applied = on_applied or (lambda path: None)
         self.config_manager = config_manager
-        self.launcher = AntigravityLauncher(config_manager, on_log=self.append_log)
+        self.launcher = AntigravityLauncher(config_manager, on_log=self.append_log,
+                                           on_state=lambda state: self.events.put(("state", state)))
 
         self.title("Antigravity 启动与汉化管理工具")
-        self.geometry("720x680")
-        self.minsize(650, 600)
+        icon_dir = Path(__file__).resolve().parent.parent / "assets"
+        self.iconbitmap(default=str(icon_dir / "launcher-icon.ico"))
+        self._brand_icon = tk.PhotoImage(file=str(icon_dir / "launcher-icon-48.png"))
+        self.geometry("1040x820")
+        self.minsize(940, 700)
 
         # Style configuration
         self._init_style()
 
         # Build UI layout
         self._create_widgets()
+        self.protocol("WM_DELETE_WINDOW", self._close_panel)
+        try:
+            if tray_factory is None:
+                from ui.tray_icon import TrayIcon
+                tray_factory = TrayIcon
+            self.tray = tray_factory(icon_dir / "launcher-icon.ico",
+                                     lambda command: self.events.put(("tray", command)))
+            self.tray.start()
+        except Exception as exc:
+            self.append_log(f"托盘不可用，管理面板将保持显示: {redact(exc)}")
+            if self.tray:
+                self.tray.close()
+            self.tray = None
 
         # Load initial values
         self._load_from_config()
 
         # Initial check
         self._update_app_status()
+        self._pump_job = self.after(50, self._pump)
+        if not hidden or not self.tray:
+            self.show_panel()
+        if hidden:
+            self._startup_job = self.after(0, lambda: self._launch_app(save=False))
 
-    def _init_style(self) -> None:
-        """Configure ttk styling."""
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-
-        # Color palette
-        self.colors = {
-            "bg": "#f8f9fa",
-            "card_bg": "#ffffff",
-            "primary": "#1a73e8",
-            "primary_active": "#1557b0",
-            "success": "#1e8e3e",
-            "danger": "#d93025",
-            "text": "#202124",
-            "secondary_text": "#5f6368",
-            "border": "#dadce0",
-        }
+    def _init_style(self):
+        self.colors = {"bg": "#f5f5f7", "card_bg": "#ffffff", "primary": "#007aff",
+                       "primary_active": "#0069da", "success": "#248a3d", "danger": "#d70015",
+                       "text": "#1d1d1f", "secondary_text": "#86868b", "border": "#e5e5ea"}
         self.configure(bg=self.colors["bg"])
+        self.option_add("*Font", ("Microsoft YaHei UI", 10))
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure("TEntry", padding=8, borderwidth=1, relief="flat",
+                        fieldbackground="#f5f5f7", bordercolor="#e5e5ea", lightcolor="#e5e5ea", darkcolor="#e5e5ea")
+        style.configure("TCombobox", padding=8, fieldbackground="#f5f5f7",
+                        background="#f5f5f7", bordercolor="#e5e5ea", arrowcolor="#86868b")
+        style.map("TCombobox", fieldbackground=[("disabled", "#f5f5f7")])
+        style.configure("Vertical.TScrollbar", background="#d1d1d6", troughcolor="#f5f5f7",
+                        borderwidth=0, arrowsize=12)
 
-        style.configure("TFrame", background=self.colors["bg"])
-        style.configure("Card.TFrame", background=self.colors["card_bg"], relief="solid", borderwidth=1)
-        style.configure("TLabelframe", background=self.colors["bg"])
-        style.configure("TLabelframe.Label", background=self.colors["bg"], foreground=self.colors["text"], font=("Microsoft YaHei UI", 10, "bold"))
+    def _create_widgets(self):
+        from ui.components import Card, PillButton, Toggle
+        bg = self.colors["bg"]
+        self.status_text = tk.StringVar(value="等待启动")
+        shell = tk.Frame(self, bg=bg)
+        shell.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(shell, bg="#ececf0", width=180)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar.pack_propagate(False)
+        logo = tk.Canvas(sidebar, width=48, height=48, bg="#ececf0", highlightthickness=0)
+        logo.pack(anchor="w", padx=24, pady=(28, 10))
+        logo.create_image(24, 24, image=self._brand_icon)
+        tk.Label(sidebar, text="Antigravity", bg="#ececf0", fg="#1d1d1f",
+                 font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=24)
+        tk.Label(sidebar, text="LAUNCHER", bg="#ececf0", fg="#8e8e93",
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=25, pady=(2, 34))
+        nav = tk.Frame(sidebar, bg="#ececf0")
+        nav.pack(fill=tk.X, padx=14)
+        PillButton(nav, text="启动台", primary=True, width=150,
+                   command=lambda: self.content_canvas.yview_moveto(0)).pack(fill=tk.X, pady=5)
+        PillButton(nav, text="运行记录", width=150,
+                   command=lambda: self.content_canvas.yview_moveto(1)).pack(fill=tk.X, pady=5)
+        footer = tk.Frame(sidebar, bg="#ececf0")
+        footer.pack(side=tk.BOTTOM, fill=tk.X, padx=23, pady=26)
+        tk.Label(footer, text="轻一点，专注一点。", bg="#ececf0", fg="#636366",
+                 font=("Microsoft YaHei UI", 9)).pack(anchor="w")
+        tk.Label(footer, text="代理 · 中文界面 · 后台守护", bg="#ececf0", fg="#8e8e93",
+                 font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(8, 0))
 
-        style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["text"], font=("Microsoft YaHei UI", 9))
-        style.configure("Secondary.TLabel", background=self.colors["bg"], foreground=self.colors["secondary_text"], font=("Microsoft YaHei UI", 8))
-        style.configure("TCheckbutton", background=self.colors["bg"], foreground=self.colors["text"], font=("Microsoft YaHei UI", 9))
+        pane = tk.Frame(shell, bg=bg)
+        pane.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.content_canvas = tk.Canvas(pane, bg=bg, highlightthickness=0)
+        scroll = ttk.Scrollbar(pane, orient="vertical", command=self.content_canvas.yview)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 3))
+        self.content_canvas.pack(fill=tk.BOTH, expand=True)
+        self.content_canvas.configure(yscrollcommand=scroll.set)
+        content = tk.Frame(self.content_canvas, bg=bg)
+        window = self.content_canvas.create_window(0, 0, window=content, anchor="nw")
+        content.bind("<Configure>", lambda e: self.content_canvas.configure(scrollregion=self.content_canvas.bbox("all")))
+        self.content_canvas.bind("<Configure>", lambda e: self.content_canvas.itemconfigure(window, width=e.width))
+        def wheel(event):
+            self.content_canvas.yview_scroll(int(-event.delta / 120), "units")
+        self.bind("<MouseWheel>", wheel)
 
-        style.configure("Primary.TButton", font=("Microsoft YaHei UI", 11, "bold"), padding=8)
-        style.configure("Action.TButton", font=("Microsoft YaHei UI", 9), padding=4)
+        header = tk.Frame(content, bg=bg)
+        header.pack(fill=tk.X, padx=28, pady=(26, 18))
+        title = tk.Frame(header, bg=bg)
+        title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(title, text="准备好，开始创造。", font=("Microsoft YaHei UI", 22, "bold"),
+                 bg=bg, fg="#1d1d1f").pack(anchor="w")
+        tk.Label(title, text="让连接与语言，回到顺手的状态。", font=("Microsoft YaHei UI", 10),
+                 bg=bg, fg="#86868b").pack(anchor="w", pady=(6, 0))
+        self.btn_launch = PillButton(header, text="启动 Antigravity", primary=True, width=174, command=self._launch_app)
+        self.btn_launch.pack(side=tk.RIGHT, padx=(14, 0), pady=8)
 
-    def _create_widgets(self) -> None:
-        """Construct all UI sections."""
-        main_container = ttk.Frame(self, padding="15")
-        main_container.pack(fill=tk.BOTH, expand=True)
+        status = tk.Frame(content, bg=bg)
+        status.pack(fill=tk.X, padx=30, pady=(0, 14))
+        self.lbl_state_dot = tk.Label(status, text="●", fg="#8e8e93", bg=bg, font=("Segoe UI", 10))
+        self.lbl_state_dot.pack(side=tk.LEFT)
+        tk.Label(status, textvariable=self.status_text, fg="#636366", bg=bg,
+                 font=("Microsoft YaHei UI", 9), wraplength=620, justify="left").pack(side=tk.LEFT, padx=8)
 
-        # 1. Header Banner
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill=tk.X, pady=(0, 10))
+        def card(title_text, subtitle=None):
+            box = Card(content)
+            box.pack(fill=tk.X, padx=28, pady=6)
+            head = tk.Frame(box.body, bg="white")
+            head.pack(fill=tk.X, pady=(0, 12))
+            label = tk.Frame(head, bg="white")
+            label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            tk.Label(label, text=title_text, bg="white", fg="#1d1d1f",
+                     font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+            if subtitle:
+                tk.Label(label, text=subtitle, bg="white", fg="#86868b",
+                         font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(4, 0))
+            return box.body, head
 
-        title_lbl = ttk.Label(
-            header_frame,
-            text="🚀 Antigravity 启动与汉化管理平台",
-            font=("Microsoft YaHei UI", 14, "bold"),
-            foreground=self.colors["primary"],
-        )
-        title_lbl.pack(anchor=tk.W)
-
-        subtitle_lbl = ttk.Label(
-            header_frame,
-            text="支持一键代理切换/编辑、本地 CDP 动态免杀汉化注入及状态监控",
-            style="Secondary.TLabel",
-        )
-        subtitle_lbl.pack(anchor=tk.W, pady=(2, 0))
-
-        # 2. Application Path Card
-        app_box = ttk.LabelFrame(main_container, text="1. 应用程序路径 (Antigravity.exe)", padding="10")
-        app_box.pack(fill=tk.X, pady=5)
-
-        app_row = ttk.Frame(app_box)
-        app_row.pack(fill=tk.X)
-
+        app, app_head = card("应用", "选择本机的 Antigravity")
+        row = tk.Frame(app, bg="white")
+        row.pack(fill=tk.X)
         self.var_app_path = tk.StringVar()
-        self.entry_app_path = ttk.Entry(app_row, textvariable=self.var_app_path)
-        self.entry_app_path.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.entry_app_path = ttk.Entry(row, textvariable=self.var_app_path, font=("Segoe UI", 10))
+        self.entry_app_path.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         self.entry_app_path.bind("<KeyRelease>", lambda e: self._update_app_status())
+        PillButton(row, text="选择…", width=80, command=self._browse_app_path).pack(side=tk.RIGHT)
+        self.lbl_app_status = tk.Label(app, bg="white", fg="#86868b", font=("Microsoft YaHei UI", 8))
+        self.lbl_app_status.pack(anchor="w", pady=(8, 0))
 
-        btn_browse = ttk.Button(app_row, text="浏览...", style="Action.TButton", command=self._browse_app_path)
-        btn_browse.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.lbl_app_status = ttk.Label(app_box, text="", font=("Microsoft YaHei UI", 8))
-        self.lbl_app_status.pack(anchor=tk.W, pady=(4, 0))
-
-        # 3. Proxy Settings Card
-        proxy_box = ttk.LabelFrame(main_container, text="2. 网络代理配置 (Proxy Settings)", padding="10")
-        proxy_box.pack(fill=tk.X, pady=5)
-
+        proxy, proxy_head = card("网络连接", "让应用通过你选择的代理连接")
         self.var_enable_proxy = tk.BooleanVar(value=True)
-        chk_proxy = ttk.Checkbutton(
-            proxy_box,
-            text="启用网络代理环境变量 (HTTP_PROXY / HTTPS_PROXY)",
-            variable=self.var_enable_proxy,
-            command=self._on_proxy_toggle,
-        )
-        chk_proxy.pack(anchor=tk.W, pady=(0, 6))
-
-        proxy_input_row = ttk.Frame(proxy_box)
-        proxy_input_row.pack(fill=tk.X, pady=2)
-
-        ttk.Label(proxy_input_row, text="代理地址:").pack(side=tk.LEFT, padx=(0, 5))
-
+        Toggle(proxy_head, self.var_enable_proxy, self._on_proxy_toggle).pack(side=tk.RIGHT)
+        row = tk.Frame(proxy, bg="white")
+        row.pack(fill=tk.X)
         self.var_current_proxy = tk.StringVar()
-        self.combo_proxies = ttk.Combobox(proxy_input_row, textvariable=self.var_current_proxy, width=32)
-        self.combo_proxies.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.combo_proxies = ttk.Combobox(row, textvariable=self.var_current_proxy, font=("Consolas", 10))
+        self.combo_proxies.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        PillButton(row, text="测试连接", width=100, command=self._test_proxy_connection).pack(side=tk.RIGHT)
+        lower = tk.Frame(proxy, bg="white")
+        lower.pack(fill=tk.X, pady=(8, 0))
+        self.lbl_proxy_test = tk.Label(lower, text="支持 HTTP、HTTPS 与 SOCKS5", bg="white",
+                                      fg="#86868b", font=("Microsoft YaHei UI", 8), wraplength=420, justify="left", anchor="w")
+        self.lbl_proxy_test.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        PillButton(lower, text="添加到列表", width=98, command=self._add_current_proxy).pack(side=tk.LEFT, padx=3)
+        PillButton(lower, text="移除", width=62, command=self._delete_current_proxy).pack(side=tk.RIGHT)
+        bypass = tk.Frame(proxy, bg="white")
+        bypass.pack(fill=tk.X, pady=(10, 0))
+        tk.Label(bypass, text="直连地址", bg="white", fg="#86868b", font=("Microsoft YaHei UI", 8)).pack(side=tk.LEFT, padx=(0, 12))
+        self.var_no_proxy = tk.StringVar()
+        ttk.Entry(bypass, textvariable=self.var_no_proxy, font=("Consolas", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        btn_test = ttk.Button(proxy_input_row, text="⚡ 测试连通", style="Action.TButton", command=self._test_proxy_connection)
-        btn_test.pack(side=tk.LEFT, padx=2)
-
-        btn_save_proxy = ttk.Button(proxy_input_row, text="➕ 保存至列表", style="Action.TButton", command=self._add_current_proxy)
-        btn_save_proxy.pack(side=tk.LEFT, padx=2)
-
-        btn_del_proxy = ttk.Button(proxy_input_row, text="🗑️ 删除", style="Action.TButton", command=self._delete_current_proxy)
-        btn_del_proxy.pack(side=tk.LEFT, padx=2)
-
-        # Proxy test result label
-        self.lbl_proxy_test = ttk.Label(proxy_box, text="", style="Secondary.TLabel")
-        self.lbl_proxy_test.pack(anchor=tk.W, pady=(3, 2))
-
-        # NO_PROXY Row
-        noproxy_row = ttk.Frame(proxy_box)
-        noproxy_row.pack(fill=tk.X, pady=(2, 0))
-        ttk.Label(noproxy_row, text="绕过列表 (NO_PROXY):", style="Secondary.TLabel").pack(side=tk.LEFT, padx=(0, 5))
-        self.var_no_proxy = tk.StringVar(value="localhost,127.0.0.1,::1")
-        entry_noproxy = ttk.Entry(noproxy_row, textvariable=self.var_no_proxy, font=("Consolas", 8))
-        entry_noproxy.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # 4. Localization Settings Card
-        hans_box = ttk.LabelFrame(main_container, text="3. 汉化选项 (Antigravity-Hans 动态方案)", padding="10")
-        hans_box.pack(fill=tk.X, pady=5)
-
+        hans, hans_head = card("中文界面", "启动后收起到系统托盘，仍会在后台保持汉化")
         self.var_enable_hans = tk.BooleanVar(value=True)
-        chk_hans = ttk.Checkbutton(
-            hans_box,
-            text="启用界面简体中文汉化 (基于 Chrome DevTools Protocol 动态注入)",
-            variable=self.var_enable_hans,
-        )
-        chk_hans.pack(anchor=tk.W)
+        Toggle(hans_head, self.var_enable_hans).pack(side=tk.RIGHT)
+        port_row = tk.Frame(hans, bg="white")
+        port_row.pack(fill=tk.X)
+        tk.Label(port_row, text="本地调试端口", bg="white", fg="#86868b", font=("Microsoft YaHei UI", 9)).pack(side=tk.LEFT)
+        self.var_debug_port = tk.StringVar()
+        ttk.Entry(port_row, textvariable=self.var_debug_port, width=8, font=("Consolas", 9)).pack(side=tk.RIGHT)
 
-        hans_desc = ttk.Label(
-            hans_box,
-            text="💡 原理说明：在应用启动时开启本地调试端口，通过内存注入汉化脚本。不修改任何原程序文件，火绒/杀毒零报警，且升级后不损坏原程序。",
-            style="Secondary.TLabel",
-            wraplength=660,
-        )
-        hans_desc.pack(anchor=tk.W, pady=(4, 0))
+        actions = tk.Frame(content, bg=bg)
+        actions.pack(fill=tk.X, padx=28, pady=(12, 8))
+        self.btn_restart = PillButton(actions, text="重新启动", width=110, command=self._restart_app)
+        self.btn_restart.pack(side=tk.LEFT)
+        PillButton(actions, text="创建快捷方式", width=130, command=self._create_desktop_shortcut).pack(side=tk.LEFT, padx=8)
+        PillButton(actions, text="保存设置", width=110, command=self._save_to_config).pack(side=tk.RIGHT)
 
-        # 5. Launch Buttons Card
-        btn_card = ttk.Frame(main_container, padding="8")
-        btn_card.pack(fill=tk.X, pady=8)
+        logs, _ = card("运行记录", "连接与启动的进展，都在这里")
+        self.txt_log = tk.Text(logs, height=5, wrap="word", font=("Consolas", 9),
+                               bg="#fafafa", fg="#636366", relief="flat", padx=10, pady=10,
+                               highlightthickness=0, insertbackground="#007aff")
+        self.txt_log.pack(fill=tk.BOTH, expand=True)
+        tk.Label(content, text="配置保存后，点击启动应用。需要重启时会先尝试正常关闭。", bg=bg,
+                 fg="#86868b", font=("Microsoft YaHei UI", 8)).pack(pady=(8, 22))
 
-        self.btn_launch = tk.Button(
-            btn_card,
-            text="🚀 立即启动 Antigravity",
-            font=("Microsoft YaHei UI", 12, "bold"),
-            bg=self.colors["primary"],
-            fg="white",
-            activebackground=self.colors["primary_active"],
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=20,
-            pady=8,
-            command=self._launch_app,
-        )
-        self.btn_launch.pack(side=tk.LEFT, padx=(0, 10))
 
-        btn_restart = ttk.Button(btn_card, text="🔄 终止已有进程并重新启动", style="Action.TButton", command=self._restart_app)
-        btn_restart.pack(side=tk.LEFT, padx=5)
-
-        btn_shortcut = ttk.Button(btn_card, text="📌 生成桌面快捷方式", style="Action.TButton", command=self._create_desktop_shortcut)
-        btn_shortcut.pack(side=tk.LEFT, padx=5)
-
-        btn_save_cfg = ttk.Button(btn_card, text="💾 保存当前配置", style="Action.TButton", command=self._save_to_config)
-        btn_save_cfg.pack(side=tk.RIGHT)
-
-        # 6. Log Console
-        log_box = ttk.LabelFrame(main_container, text="4. 运行日志与状态输出", padding="6")
-        log_box.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-
-        self.txt_log = tk.Text(log_box, wrap="word", height=8, font=("Consolas", 9), bg="#1e1e1e", fg="#d4d4d4")
-        self.txt_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        scrollbar = ttk.Scrollbar(log_box, orient=tk.VERTICAL, command=self.txt_log.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.txt_log.config(yscrollcommand=scrollbar.set)
-
-    def _load_from_config(self) -> None:
-        """Load values from config_manager."""
-        self.var_app_path.set(self.config_manager.get("app_path", ""))
-        self.var_enable_proxy.set(self.config_manager.get("enable_proxy", True))
-        self.var_no_proxy.set(self.config_manager.get("no_proxy", "localhost,127.0.0.1,::1"))
-        self.var_enable_hans.set(self.config_manager.get("enable_hans", True))
-
-        proxy_list = self.config_manager.get("proxy_list", [])
-        self.combo_proxies["values"] = proxy_list
-        current_proxy = self.config_manager.get("current_proxy", "")
-        if current_proxy:
-            self.var_current_proxy.set(current_proxy)
-        elif proxy_list:
-            self.var_current_proxy.set(proxy_list[0])
-
+    def _load_from_config(self):
+        for name, var in (("app_path", self.var_app_path), ("current_proxy", self.var_current_proxy),
+                          ("no_proxy", self.var_no_proxy), ("debugging_port", self.var_debug_port)):
+            value = self.config_manager.get(name, self.config_manager.defaults[name])
+            var.set(value if isinstance(value, (str, int)) else self.config_manager.defaults[name])
+        for name, var in (("enable_proxy", self.var_enable_proxy), ("enable_hans", self.var_enable_hans)):
+            value = self.config_manager.get(name, True)
+            var.set(value if type(value) is bool else True)
+        proxies = self.config_manager.get("proxy_list", [])
+        self.combo_proxies["values"] = proxies if isinstance(proxies, list) else []
         self._on_proxy_toggle()
-        self.append_log("[初始化] 配置加载完毕。")
+        self.append_log(self.config_manager.load_error or "配置已加载；保存配置后点击启动以应用。")
 
-    def _save_to_config(self, show_prompt: bool = True) -> None:
-        """Save form state back to config manager."""
-        self.config_manager.set("app_path", self.var_app_path.get().strip())
-        self.config_manager.set("enable_proxy", self.var_enable_proxy.get())
-        self.config_manager.set("current_proxy", self.var_current_proxy.get().strip())
-        self.config_manager.set("no_proxy", self.var_no_proxy.get().strip())
-        self.config_manager.set("enable_hans", self.var_enable_hans.get())
-
-        if self.config_manager.save():
-            self.append_log("[配置] 设置已成功保存至 config.json。")
+    def _save_to_config(self, show_prompt=True):
+        try:
+            updates = {
+                "app_path": self.var_app_path.get().strip(),
+                "current_proxy": self.var_current_proxy.get().strip(),
+                "enable_proxy": self.var_enable_proxy.get(),
+                "enable_hans": self.var_enable_hans.get(),
+                "no_proxy": self.var_no_proxy.get().strip(),
+                "debugging_port": int(self.var_debug_port.get()),
+            }
+            if not self.config_manager.save(updates):
+                raise ValueError(self.config_manager.last_error)
+            self.launcher.configuration_saved()
+            self.append_log("配置已保存；如与运行中配置不同，下次点击启动时自动正常重启。")
             if show_prompt:
-                messagebox.showinfo("提示", "配置已成功保存！")
-        else:
-            self.append_log("[错误] 保存配置失败。")
+                messagebox.showinfo("配置", "配置已保存。点击启动以应用。")
+            return True
+        except (ValueError, TypeError) as exc:
+            self.append_log(f"保存失败: {redact(exc)}")
+            messagebox.showerror("配置无效", redact(exc))
+            return False
 
-    def _on_proxy_toggle(self) -> None:
-        """Enable or disable proxy widgets."""
-        state = "normal" if self.var_enable_proxy.get() else "disabled"
-        self.combo_proxies.configure(state=state)
+    def _on_proxy_toggle(self):
+        self.combo_proxies.configure(state="normal" if self.var_enable_proxy.get() else "disabled")
 
-    def _update_app_status(self) -> None:
-        """Check if selected Antigravity.exe is present."""
+    def _update_app_status(self):
         path = self.var_app_path.get().strip()
-        if not path:
-            self.lbl_app_status.configure(text="⚠️ 请指定 Antigravity.exe 路径", foreground=self.colors["danger"])
-        elif os.path.exists(path):
-            self.lbl_app_status.configure(text=f"✅ 找到可执行文件 ({path})", foreground=self.colors["success"])
-        else:
-            self.lbl_app_status.configure(text=f"❌ 文件不存在: {path}", foreground=self.colors["danger"])
+        exists = os.path.isfile(path)
+        self.lbl_app_status.configure(text="已找到应用文件" if exists else "请选择有效的 Antigravity.exe",
+                                      foreground=self.colors["success"] if exists else self.colors["danger"])
 
-    def _browse_app_path(self) -> None:
-        """File dialog to choose Antigravity.exe."""
-        initial_dir = os.path.dirname(self.var_app_path.get().strip()) or os.environ.get("LOCALAPPDATA", "")
-        chosen = filedialog.askopenfilename(
-            title="选择 Antigravity.exe",
-            initialdir=initial_dir,
-            filetypes=[("Antigravity 应用程序", "*.exe"), ("所有文件", "*.*")],
-        )
+    def _browse_app_path(self):
+        chosen = filedialog.askopenfilename(title="选择 Antigravity.exe", filetypes=[("应用程序", "*.exe")])
         if chosen:
             self.var_app_path.set(chosen)
             self._update_app_status()
-            self._save_to_config(show_prompt=False)
 
-    def _add_current_proxy(self) -> None:
-        """Add input proxy to saved list."""
-        proxy = self.var_current_proxy.get().strip()
-        if not proxy:
-            messagebox.showwarning("警告", "代理地址不能为空！")
-            return
-        self.config_manager.add_proxy(proxy)
-        self.combo_proxies["values"] = self.config_manager.get("proxy_list", [])
-        self.append_log(f"[代理] 已添加代理地址: {proxy}")
-        messagebox.showinfo("成功", f"代理 {proxy} 已添加到快捷列表！")
-
-    def _delete_current_proxy(self) -> None:
-        """Remove current proxy from list."""
-        proxy = self.var_current_proxy.get().strip()
-        if not proxy:
-            return
-        if messagebox.askyesno("确认", f"确定从保存列表中移除代理 {proxy} 吗？"):
-            self.config_manager.remove_proxy(proxy)
-            self.combo_proxies["values"] = self.config_manager.get("proxy_list", [])
-            self.var_current_proxy.set(self.config_manager.get("current_proxy", ""))
-            self.append_log(f"[代理] 已移除代理地址: {proxy}")
-
-    def _test_proxy_connection(self) -> None:
-        """Run connectivity check in a separate thread."""
-        proxy = self.var_current_proxy.get().strip()
-        if not proxy:
-            messagebox.showwarning("提示", "请先输入或选择代理地址")
-            return
-
-        self.lbl_proxy_test.configure(text="⏳ 正在测试代理连通性及网络延迟...", foreground=self.colors["primary"])
-        self.append_log(f"[测试] 开始检测代理连通性: {proxy}")
-
-        def worker():
-            success, latency, msg = check_proxy_http(proxy, test_url="https://www.google.com", timeout=4.0)
-            if not success:
-                # Fallback test with github
-                success, latency, msg = check_proxy_http(proxy, test_url="https://github.com", timeout=4.0)
-
-            def update_ui():
-                if success:
-                    self.lbl_proxy_test.configure(text=f"🟢 {msg}", foreground=self.colors["success"])
-                    self.append_log(f"[测试结果] 成功: {msg}")
-                else:
-                    self.lbl_proxy_test.configure(text=f"🔴 {msg}", foreground=self.colors["danger"])
-                    self.append_log(f"[测试结果] 失败: {msg}")
-
-            self.after(0, update_ui)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _launch_app(self) -> None:
-        """Launch Antigravity."""
-        self._save_to_config(show_prompt=False)
-        self.btn_launch.configure(state="disabled")
-
-        def task():
-            success, msg = self.launcher.launch()
-            self.after(0, lambda: self.btn_launch.configure(state="normal"))
-            if success:
-                self.after(0, lambda: messagebox.showinfo("启动成功", f"Antigravity 已成功启动！\n{msg}"))
-            else:
-                self.after(0, lambda: messagebox.showerror("启动失败", msg))
-
-        threading.Thread(target=task, daemon=True).start()
-
-    def _restart_app(self) -> None:
-        """Terminate existing instances and launch cleanly."""
-        if messagebox.askyesno("重启确认", "将关闭当前运行的所有 Antigravity 实例并重新启动，是否继续？"):
-            self.append_log("[启动器] 正在请求关闭已有的 Antigravity 进程...")
-            terminate_running_instances()
-            time.sleep(1.0)
-            self._launch_app()
-
-    def _create_desktop_shortcut(self) -> None:
-        """Generate one-click launcher shortcuts and batch scripts on the user's Desktop."""
-        self._save_to_config(show_prompt=False)
+    def _add_current_proxy(self):
         try:
-            app_path = self.config_manager.get("app_path", "")
-            ok, msgs = create_all_desktop_shortcuts(app_path=app_path)
-            for m in msgs:
-                self.append_log(f"[快捷方式] {m}")
+            proxy = self.config_manager.add_proxy(self.var_current_proxy.get())
+            self.var_current_proxy.set(proxy)
+            self.combo_proxies["values"] = self.config_manager.get("proxy_list")
+            self.append_log("代理已添加到列表")
+        except ValueError as exc:
+            messagebox.showerror("代理配置", redact(exc))
 
-            if ok:
-                desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-                summary = (
-                    "已成功在桌面生成启动快捷方式与脚本：\n\n"
-                    "1. 🚀 Antigravity (汉化代理版).lnk\n"
-                    "   （带原版图标，无控制台黑框，双击静默直启 + 自动注入汉化）\n\n"
-                    "2. ⚙️ Antigravity 启动管理工具.lnk\n"
-                    "   （打开当前控制面板，可随时切换代理或查看运行状态）\n\n"
-                    "3. 📄 启动Antigravity(汉化代理版).bat\n"
-                    "   （桌面备用批处理脚本）"
-                )
-                messagebox.showinfo("创建成功", summary)
-            else:
-                messagebox.showwarning("部分完成", "\n".join(msgs))
-        except Exception as e:
-            self.append_log(f"[错误] 创建桌面快捷方式失败: {e}")
-            messagebox.showerror("错误", f"创建快捷方式失败: {e}")
+    def _delete_current_proxy(self):
+        try:
+            self.config_manager.remove_proxy(self.var_current_proxy.get())
+            self.combo_proxies["values"] = self.config_manager.get("proxy_list")
+            self.var_current_proxy.set(self.config_manager.get("current_proxy"))
+            self.var_enable_proxy.set(self.config_manager.get("enable_proxy"))
+            self.launcher.configuration_saved()
+        except ValueError as exc:
+            messagebox.showerror("代理配置", redact(exc))
 
-    def append_log(self, text: str) -> None:
-        """Add line to log console safely from any thread."""
-        def _insert():
-            timestamp = time.strftime("%H:%M:%S")
-            self.txt_log.insert(tk.END, f"[{timestamp}] {text}\n")
-            self.txt_log.see(tk.END)
+    def _test_proxy_connection(self):
+        self.proxy_generation += 1
+        generation = self.proxy_generation
+        proxy = self.var_current_proxy.get().strip()
+        self.lbl_proxy_test.configure(text="正在检测代理请求…")
+        def worker():
+            result = check_proxy_http(proxy)
+            def done():
+                if generation != self.proxy_generation or proxy != self.var_current_proxy.get().strip():
+                    return
+                self.lbl_proxy_test.configure(text=result[2], foreground=self.colors["success" if result[0] else "danger"])
+                self.append_log(result[2])
+            self.events.put(("callback", done))
+        threading.Thread(target=worker, name="proxy-check", daemon=True).start()
 
-        self.after(0, _insert)
+    def _launch_app(self, save=True, restart=False):
+        if self.busy or (save and not self._save_to_config(False)):
+            return
+        try:
+            settings = self.config_manager.snapshot()
+            if not self.ensure_instance(settings.app_path):
+                return
+        except Exception as exc:
+            self.show_panel()
+            self.append_log(redact(exc))
+            messagebox.showerror("无法启动", redact(exc))
+            return
+        self.busy = True
+        self.btn_launch.configure(state="disabled")
+        self.btn_restart.configure(state="disabled")
+        def worker():
+            try:
+                result = self.launcher.restart() if restart else self.launcher.start()
+                self.events.put(("finished", result))
+            except Exception as exc:
+                self.append_log(redact(exc))
+                self.events.put(("finished", None))
+        threading.Thread(target=worker, name="launcher-operation", daemon=True).start()
+
+    def _restart_app(self):
+        self._launch_app(restart=True)
+
+    def _create_desktop_shortcut(self):
+        if not self._save_to_config(False):
+            return
+        app_path = self.config_manager.get("app_path")
+        def worker():
+            ok, messages = create_all_desktop_shortcuts(app_path=app_path)
+            def done():
+                for message in messages:
+                    self.append_log(message)
+                (messagebox.showinfo if ok else messagebox.showwarning)("快捷方式", "\n".join(messages))
+            self.events.put(("callback", done))
+        threading.Thread(target=worker, name="shortcut-create", daemon=True).start()
+
+    def append_log(self, text):
+        safe = redact(text)
+        logging.getLogger("antigravity_launcher.ui").info(safe)
+        self.events.put(("log", safe))
+
+    def show_panel(self):
+        self.hidden = False
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _hide_to_tray(self):
+        if not self.tray or not self.tray.available:
+            self.show_panel()
+            self.append_log("托盘图标不可用，已保留管理面板。")
+            return False
+        self.hidden = True
+        self.withdraw()
+        return True
+
+    def _close_panel(self):
+        state = self.launcher.status()
+        if self.busy or (state.pid and state.status != "stopped"):
+            self._hide_to_tray()
+        else:
+            self._exit()
+
+    def _exit(self):
+        if self.closed:
+            return
+        self.closed = True
+        for job in (self._pump_job, self._startup_job):
+            if job:
+                self.after_cancel(job)
+        try:
+            self.launcher.stop_monitoring()
+        finally:
+            if self.tray:
+                self.tray.close()
+            self.on_exit()
+            self.destroy()
+
+    def _request_exit(self):
+        if self.busy:
+            self.exit_when_idle = True
+            self.launcher.stop_monitoring()
+        else:
+            self._exit()
+
+    def _pump(self):
+        if self.closed:
+            return
+        if self._pump_job:
+            self.after_cancel(self._pump_job)
+            self._pump_job = None
+        for _ in range(200):
+            try:
+                kind, value = self.events.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "log":
+                self.txt_log.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {value}\n")
+                if int(self.txt_log.index("end-1c").split(".")[0]) > 1500:
+                    self.txt_log.delete("1.0", "200.0")
+                self.txt_log.see(tk.END)
+            elif kind == "callback":
+                value()
+            elif kind == "state":
+                if self.tray:
+                    self.tray.update(value.message)
+                self.lbl_state_dot.configure(fg={"ready": "#34c759", "failed": "#ff3b30", "degraded": "#ff9500",
+                    "starting": "#007aff", "injecting": "#007aff", "waiting_cdp": "#007aff"}.get(value.status, "#8e8e93"))
+                self.status_text.set(value.message + (f" · 已汉化 {value.injected_targets} 页" if value.cdp_ready else "") +
+                                     (" · 配置待应用" if value.pending_config else ""))
+                if value.status == "stopped" and value.pid is None and self.hidden and not self.busy:
+                    self._exit()
+                    return
+            elif kind == "finished":
+                self.busy = False
+                if self.exit_when_idle:
+                    self._exit()
+                    return
+                self.btn_launch.configure(state="normal")
+                self.btn_restart.configure(state="normal")
+                if value and value.status in ("ready", "degraded") and self.launcher.applied:
+                    self.on_applied(self.launcher.applied.app_path)
+                if value is None or value.status in ("failed", "degraded"):
+                    self.show_panel()
+                    self.append_log(value.message if value else "启动失败，请查看日志")
+                elif value.status == "ready":
+                    self._hide_to_tray()
+            elif kind == "tray":
+                if value == "show":
+                    self.show_panel()
+                elif value == "exit":
+                    self._request_exit()
+                    if self.closed: return
+                elif value == "unavailable":
+                    self.show_panel()
+                    self.append_log("系统托盘暂不可用，已恢复管理面板。")
+            elif kind == "ipc":
+                if value == "show": self.show_panel()
+                elif value == "start": self._launch_app(save=False)
+                elif value == "restart": self._launch_app(save=False, restart=True)
+                elif value == "stop_monitoring":
+                    self.launcher.stop_monitoring()
+                    if self.hidden: self._exit(); return
+        if not self.closed:
+            self._pump_job = self.after(50, self._pump)
+
+    def report_callback_exception(self, exc_type, exc_value, tb):
+        logging.getLogger("antigravity_launcher.ui").error("界面回调异常", exc_info=(exc_type, exc_value, tb))
+        self.append_log(f"操作失败: {redact(exc_value)}")

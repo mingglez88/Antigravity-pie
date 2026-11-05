@@ -1,0 +1,12 @@
+{
+  "name": "antigravity-launcher-checks",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "icons": "node scripts/build-icons.cjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "jsdom": "^26.1.0"
+  }
+}

@@ -1,0 +1,3 @@
+websockets>=15,<18
+requests[socks]>=2.32,<3
+psutil>=7,<8

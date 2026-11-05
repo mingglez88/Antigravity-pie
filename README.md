@@ -1,122 +1,180 @@
-# Antigravity-pie (Antigravity 启动与汉化管理平台)
+# Antigravity-pie · Antigravity Launcher
 
-专为 **Google Antigravity 2.0 桌面端** 定制的轻量可视化启动器与中文汉化管理平台。基于 100% 开源纯 Python 架构与标准 Chrome DevTools Protocol (CDP)，集成**网络代理可视化切换**、**代码编辑区免误杀严格保护**与**零杀毒软件误报的动态内存汉化注入**。
+Windows 桌面启动与中文界面管理工具。使用 Python/Tkinter，通过本机 CDP 接口加载汉化脚本，提供代理设置、启动状态、后台监视和桌面快捷方式。
 
----
+界面采用浅灰底色、白色圆角卡片与侧栏。无需 Node.js 即可运行；Node.js 只用于开发测试。
+管理工具使用统一的悬浮球体/轨道图标，覆盖界面、窗口、任务栏和管理快捷方式。
 
-## 一、 为什么开发本项目？（解决的核心痛点）
+## 安装
 
-1. **解决杀毒软件（火绒、Defender 等）误报与报毒**：
-   * 社区上部分预编译的 Go 二进制工具由于采用隐藏控制台、底层挂载本地调试端口以及注入外部脚本的行为，极易被火绒、360 等国内杀毒软件误判为 `HEUR:Backdoor/CobaltStrike` 并强制隔离。
-   * 本项目**完全摒弃任何第三方黑盒预编译可执行文件**，全部代码均为 100% 透明可审计的 Python 源码，调用官方 Python 标准库与公开的 CDP 协议接口，在火绒及各大杀毒软件下实现 **0 告警、0 拦截、绝对安全**。
+需要 Windows 10/11、[Python 3.11 或以上](https://www.python.org/downloads/windows/)，以及已经安装的 [Antigravity](https://antigravity.google/download)。安装 Python 时勾选添加到 PATH；普通使用不需要 Node.js。
 
-2. **解决网络代理与本地内核冲突导致的白屏（`ERR_TIMED_OUT`）**：
-   * 原生直接向 Antigravity 传递 `--proxy-server` 参数会导致其内部的 loopback 通信（连接自身动态端口的本地语言服务与内核）被外部代理劫持，引发超时严重卡死或主窗口白屏。
-   * 本项目严格遵循最佳实践，通过进程隔离的环境变量（`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`）仅对外部 AI 模型交互、网络登录与更新请求生效，本地内核与调试端口通信毫秒级直连，彻底杜绝白屏问题。
+### 1. 获取项目
 
-3. **解决代码编辑器与源文件被误翻译的问题**：
-   * 传统的汉化脚本往往对页面元素做全局词条替换，导致用户在 Antigravity 中打开代码文件时，代码里的原生关键字（如 `import` 变 `导入`、`print` 变 `打印`、`connect` 变 `连接`）被错误翻译破坏。
-   * 本项目重构了 DOM 遍历过滤逻辑，对 `.file-viewer-root`、`.code-line`、`.line-content`、`.token`、`.monaco-editor`、`.cm-line` 等代码元素建立**强隔离保护机制**，确保代码文件 100% 保持原生代码原样，仅对软件外壳和 UI 界面进行精准汉化。
+已安装 Git 时，在 PowerShell 执行：
 
-4. **版本无损升级（免破坏官方安装包）**：
-   * 采用 Chrome DevTools Protocol 动态内存注入方案，不修改或重新打包官方的 `app.asar` 核心文件。软件自动升级后依然完好无损，即开即用。
+~~~powershell
+git clone https://github.com/mingglez88/Antigravity-pie.git
+cd Antigravity-pie
+~~~
 
----
+也可以[下载 ZIP](https://github.com/mingglez88/Antigravity-pie/archive/refs/heads/master.zip)，解压后进入包含 launcher.py 和 run.bat 的目录，在该目录打开 PowerShell。
 
-## 二、 核心特性与功能
+### 2. 安装依赖
 
-* 🚀 **双模式一键启动**：
-  * **静默启动**：双击桌面快捷方式即可秒级静默拉起应用并自动注入汉化，**无黑色 cmd 窗口闪烁**。
-  * **可视化控制台**：打开交互式管理面板，自由调整配置、监控状态。
-* 🌐 **代理可视化管理与一键切换**：
-  * 支持在常用代理节点之间快速下拉切换（例如 `http://127.0.0.1:7891`、`http://127.0.0.1:60808`、`http://127.0.0.1:10809` 等）。
-  * 内置 **⚡ 代理连通性测试**，一键测量 HTTP 往返延迟，快速排查代理可用性。
-  * 支持自定义添加、保存与删除常用代理地址，配置自动持久化到本地。
-* 🇨🇳 **深度精细化中文本地化**：
-  * 涵盖侧边栏、对话列表、全局设置（快捷键、外观、模型配置、自动化）。
-  * 补全后台任务栏动作动词与复合查询（`检查 ...`、`运行 ...`、`打印 ...`、`在覆盖层中搜索 ...`、`Git 提交日志` 等）。
-  * 补全右键上下文菜单（`在文件资源管理器中显示`、`拆分`、`标为未读`、`对话名称`、`项目名称` 等）。
-  * 补全环境选择器（`本地环境`、`选择环境`）与步骤指示器（`已分析`、`已创建`、`工作中`、`刚刚`）。
-* 🔄 **进程智能生命周期监视**：
-  * 自动监听 `Antigravity.exe` 进程生命周期，窗口刷新或重启时无缝重连注入，退出时自动回收资源。
-* 📌 **一键生成桌面快捷方式**：
-  * 自动为用户在 Windows 桌面创建标准 `.lnk` 快捷方式（关联原版 Antigravity 图标）。
-  * 同步生成 `.bat` 与 `.vbs` 脚本，满足不同场景的使用偏好。
+~~~powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+~~~
 
----
+网络超时且本机代理已在 7897 端口运行时，可执行：
 
-## 三、 项目架构与目录说明
+~~~powershell
+.\.venv\Scripts\python.exe -m pip install --proxy http://127.0.0.1:7897 -r requirements.txt
+~~~
 
-```text
-Antigravity-pie/
-├── assets/
-│   └── antigravity-hans-overlay.js  # 深度校对与强保护的多语言前端注入脚本
-├── core/
-│   ├── app_launcher.py              # 进程拉起、环境变量隔离与生命周期管理
-│   ├── cdp_injector.py              # 基于原生 WebSocket 的 CDP 内存注入监视器
-│   ├── config_manager.py            # 本地配置文件读写与默认项配置
-│   ├── proxy_checker.py             # 网络代理端口探测与延迟检测模块
-│   └── shortcut_helper.py           # Windows 桌面快捷方式与脚本生成器
-├── ui/
-│   └── main_window.py               # 基于 Tkinter 的现代简洁管理面板
-├── launcher.py                      # 统一入口脚本（支持 GUI 模式与 --silent-launch 静默模式）
-├── run.bat                          # 根目录双击启动批处理
-└── README.md                        # 项目使用说明文档
-```
+无需激活虚拟环境；上面的命令直接使用项目的 Python。
 
----
+### 3. 打开管理面板
 
-## 四、 快速使用指南
+双击 run.bat，或者执行：
 
-### 1. 运行环境要求
-- **操作系统**：Windows 10 / 11 (x64)
-- **Python**：Python 3.10 及以上（自带 `pythonw.exe` 即可实现免黑框静默运行）
-- **依赖库**：仅需安装基础 websocket 通信库：
-  ```bash
-  pip install websockets
-  ```
+~~~powershell
+.\run.bat
+~~~
 
-### 2. 启动方式
+首次启动会尝试检测 Antigravity 的安装位置；未找到时点击“选择…”指定 Antigravity.exe。它是独立安装的官方应用，本项目不会代为下载或安装它。
 
-#### 方式 A：通过桌面快捷方式（最推荐）
-在管理面板中点击 **【📌 生成桌面快捷方式】** 后，桌面上将生成：
-- **`Antigravity (汉化代理版).lnk`**：日常使用推荐，带官方图标，双击直接启动汉化与代理，零干扰。
-- **`Antigravity 启动管理工具.lnk`**：用于随时调出管理面板，调整代理端口或查看注入日志。
+## 启动方式
 
-#### 方式 B：双击批处理脚本
-直接双击项目根目录下的 **`run.bat`**。
+~~~powershell
+# 打开管理面板
+.\.venv\Scripts\python.exe launcher.py
 
-#### 方式 C：命令行启动
-```bash
-# 启动图形管理面板
-python launcher.py
+# 根据已保存配置启动应用，正常情况下不显示管理面板
+.\.venv\Scripts\pythonw.exe launcher.py --silent-launch
 
-# 直接静默启动 Antigravity 汉化版
-python launcher.py --silent-launch
+# 生成桌面快捷方式及备用启动脚本
+.\.venv\Scripts\python.exe launcher.py --create-shortcut
+~~~
 
-# 重新生成桌面快捷方式
-python launcher.py --create-shortcut
-```
+run.bat 和生成的快捷方式优先使用项目 .venv。移动项目目录或重建虚拟环境后，请重新生成快捷方式。
 
----
+## 日常使用
 
-## 五、 致谢与上游开源项目声明 (Acknowledgements)
+1. 在“应用”中确认 Antigravity.exe 路径。
+2. 在“网络连接”中选择代理并点击“测试连接”。需要直连时关闭代理开关；自定义地址可通过“添加到列表”保存。
+3. 按需开启“中文界面”，点击“保存设置”。
+4. 点击“启动 Antigravity”。成功后面板自动收进右下角系统托盘，点击托盘图标恢复面板。
+5. 日常使用可点击“创建快捷方式”，之后从桌面“Antigravity (汉化代理版)”直接启动；“Antigravity 启动管理工具”用于调整设置。
 
-本项目是在开源社区现有工作的基础上进行针对性架构重构与增强开发的，特别向以下优秀的开源项目及作者致以诚挚的敬意与感谢：
+应用正在运行且启动参数发生变化时，会先尝试正常关闭，再重新启动。
 
-1. **上游项目：[Antigravity-Hans](https://github.com/yuexps/Antigravity-Hans)**
-   * **作者**：[@yuexps](https://github.com/yuexps) 及所有贡献者
-   * **贡献说明**：本项目核心的汉化注入架构与绝大部分精准的基础词汇库来源于 `Antigravity-Hans` 的开创性工作。该项目探索出的 Chrome DevTools Protocol 动态内存注入机制，为免修改官方包汉化提供了极为优秀的底层思路。
-   * 本项目在此基础上重构了纯 Python 实现、补全了后台任务及上下文菜单汉化、强化了代码区跳过保护机制，并集成了可视化代理管理。
+保存配置本身不会重启应用。正常关闭最多等待 10 秒，应用阻止退出时停止操作并显示原因，不强制结束进程。
 
-2. **词库参考：[antigravity-chinese](https://github.com/kdczyz/antigravity-chinese)**
-   * **作者**：[@kdczyz](https://github.com/kdczyz)
-   * **贡献说明**：为 Antigravity 早期词条整理与中文本地化提供了宝贵的词汇参考。
+状态会区分“等待调试端口”“初始化汉化”“就绪”“部分可用”“失败”。创建了进程不代表汉化完成；首次等待 30 秒后仍未完成汉化，会保留应用并在后台重试。
 
----
+关闭面板后继续监视；再次打开管理快捷方式会显示已有面板。应用退出后，隐藏的启动器自动退出，可见面板则回到待命。重复启动使用当前用户的命名互斥锁和命名管道协调。
 
-## 六、 免责声明 (Disclaimer)
+点击启动并成功就绪后，管理面板自动收起到右下角系统托盘，后台汉化继续运行。点击托盘图标可恢复面板，右键可选择“打开管理面板”或“退出管理工具”。退出管理工具仅停止监视，不关闭 Antigravity。启动失败或托盘不可用时保留面板显示；图标是否直接显示或收在通知区域的展开菜单中，由 Windows 设置决定。
 
-1. 本项目仅供学习、交流与技术研究使用。
-2. 本项目通过公共开发调试接口（Chrome DevTools Protocol）对界面文本进行只读本地映射，不修改 Antigravity 的任何二进制文件、数据包或服务端通信协议。
-3. 请遵循 Google Antigravity 及相关产品的官方使用条款，请勿将本项目用于任何违反法律法规或商业侵权的行为。
+## 代理与配置
+
+默认代理列表按下面顺序提供，首次安装默认选中 SOCKS5：
+
+~~~text
+socks5://127.0.0.1:7897
+https://127.0.0.1:7897
+http://127.0.0.1:7897
+~~~
+
+支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H，以及 URL 编码的用户名/密码。输入 socks:// 会自动规范化为 socks5://；检测时使用代理端 DNS。本工具不提供协议转发，也不修改系统代理或全局环境变量。
+
+https:// 表示“代理入口本身使用 TLS”，不是“通过代理访问 HTTPS 网站”。普通 HTTP/混合端口访问 HTTPS 网站仍可使用 http://；只有代理端确实提供 TLS 入口时才选择 https://。
+
+默认直连列表为：
+
+~~~text
+localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+~~~
+
+三个 IPv4 私网网段已按 [RFC 1918](https://www.rfc-editor.org/rfc/rfc1918.html) 核对：
+
+| 网段 | 地址范围 |
+|---|---|
+| 10.0.0.0/8 | 10.0.0.0–10.255.255.255 |
+| 172.16.0.0/12 | 172.16.0.0–172.31.255.255 |
+| 192.168.0.0/16 | 192.168.0.0–192.168.255.255 |
+
+直连列表支持英文/中文逗号、分号输入，保存时统一为逗号并校验 CIDR。localhost、127.0.0.1、::1 始终保留，工具的 CDP 连接显式直连。私网直连规则传入应用的 NO_PROXY；是否使用该变量取决于应用内部网络模块，不能把检测请求成功等同于所有内部请求已验证。
+
+已有配置的当前代理、自定义列表和直连项会保留；更新代码会补入新的代理预设。首次配置使用上面全部默认值；已有用户可在面板把直连列表更新为上面的内容。
+
+配置保存在项目目录的 config.json，不进入 Git。写入采用同目录临时文件和原子替换；上一份有效配置保存在 config.json.bak。坏 JSON 会保留原件并阻止启动，请修复该文件或将其移走后重新打开面板。结构错误配置在有效修复时保留为 config.json.invalid-*。
+
+代理认证信息仍属于本地配置，日志输出会脱敏；请勿分享原始配置文件。
+
+## 汉化原理与范围
+
+汉化只处理经进程、页面来源和界面特征确认的应用页面，不修改官方安装包。界面更新由 MutationObserver 增量处理，采用分批调度和有限缓存；代码区、输入内容、会话名称和回复正文设有跳过规则。
+
+新版本的 Antigravity 可能改变页面结构，存在漏翻或兼容性变化。脚本中的保护规则经过回归测试，但不能保证所有未来页面都被正确识别。任何安全软件是否告警也取决于具体环境。
+
+## 日志与排错
+
+日志位置：%LOCALAPPDATA%\AntigravityLauncher\logs\launcher.log。UTF-8 编码，每份最多 2 MiB，总共保留 3 份。
+
+- 缺少依赖：使用上面的 .venv Python 安装 requirements.txt。
+- 调试端口冲突：在面板调整“本地调试端口”，保存后重新启动。
+- 应用未退出：处理应用自身的保存/确认提示，再重试启动。
+- 应用运行但未汉化：检查状态和日志；工具会尝试恢复。不要把未知端口或任意浏览页面加入注入范围。
+- 快捷方式无效：从当前项目虚拟环境重新生成，保持项目路径可用。
+
+## 开发与验证
+
+~~~powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+npm.cmd ci --ignore-scripts
+.\scripts\check.ps1
+~~~
+
+requirements.in / requirements-dev.in 是依赖范围，两个 .txt 文件为已验证版本快照。更新依赖后需重新生成锁文件并运行检查。package-lock.json 锁定 jsdom、SVG 渲染工具及其依赖。
+
+图标源文件为 assets/launcher-icon.svg；运行 npm run icons 重建界面 PNG 和 7 个尺寸的 Windows ICO，再运行 npm test 校验资源一致性。
+
+Python 测试使用本地模拟进程、代理和 CDP；JavaScript 测试使用实际汉化脚本与 jsdom。Windows 特有测试会创建临时快捷方式并执行标记脚本，测试不发送模型请求。TLS 测试需要 Git for Windows 附带的 OpenSSL，缺失时该组测试明确跳过。
+
+Windows CI 使用 Python 3.11/3.14 和 Node 24，两组检查均已通过。最新状态见 [GitHub Actions](https://github.com/mingglez88/Antigravity-pie/actions/workflows/checks.yml)，验证范围见 [VALIDATION.md](docs/VALIDATION.md)。
+
+## 更新项目
+
+关闭管理工具后，在项目目录执行以下命令，再双击 run.bat：
+
+~~~powershell
+git pull --ff-only
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+~~~
+
+ZIP 安装用户可下载新 ZIP 并替换源码，保留自己的 config.json，然后重新安装依赖。项目目录发生变化时需重新生成快捷方式。
+
+主要模块：
+
+| 模块 | 职责 |
+|---|---|
+| core/app_launcher.py | 统一状态、启动、复用、重启和监视 |
+| core/process_backend.py | 进程身份、正常退出和端口归属 |
+| core/single_instance.py | 当前用户单实例与有界 JSON 指令 |
+| core/cdp_injector.py | 页面来源验证、连接复用和注入确认 |
+| core/config_manager.py / proxy_checker.py | 配置持久化、代理校验与检测 |
+| core/shortcut_helper.py / windows_shortcut.py | Unicode 快捷方式生成、持久化与读回 |
+| core/diagnostics.py | 日志和异常记录 |
+| ui/ | Tkinter 面板、圆角控件及主线程事件队列 |
+| assets/antigravity-hans-overlay.js | 词库、增量翻译、缓存与内容保护 |
+
+接手开发前阅读 [HANDOFF.md](HANDOFF.md) 和 [实施计划](docs/IMPLEMENTATION_PLAN.md)，按模块测试并提交。
+
+## 上游致谢
+
+汉化词库和 CDP 方案参考 [yuexps/Antigravity-Hans](https://github.com/yuexps/Antigravity-Hans)，词条亦参考 [kdczyz/antigravity-chinese](https://github.com/kdczyz/antigravity-chinese)。本项目在其基础上实现 Python 启动控制、代理管理、后台生命周期及本地测试。
+
+本项目为独立工具，不属于 Google 官方产品。请遵循应用本身的使用条款。
